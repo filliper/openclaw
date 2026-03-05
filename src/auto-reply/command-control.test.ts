@@ -563,7 +563,6 @@ describe("resolveCommandAuthorization", () => {
       expect(discordResult).toBe(true);
     });
   });
-  });
 });
 
 describe("control command parsing", () => {
