@@ -198,8 +198,10 @@ export function resolveProxyFetchFromEnv(targetUrl?: string): typeof fetch | und
   if (!proxyUrl?.trim()) {
     return undefined;
   }
-  // Use the default fetch path for hosts that should stay local. This avoids
-  // proxying internal STT/media requests and keeps multipart uploads intact.
+  // Use the default fetch path only for loopback targets or hosts the operator
+  // explicitly excluded through NO_PROXY. This keeps proxy behavior aligned
+  // with standard clients while still allowing self-hosted STT/media backends
+  // to opt out when multipart uploads break through proxy wrappers.
   if (targetUrl && shouldBypassProxy(targetUrl, process.env)) {
     return undefined;
   }
