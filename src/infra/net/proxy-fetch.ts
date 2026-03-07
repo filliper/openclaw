@@ -6,7 +6,6 @@ export const PROXY_FETCH_PROXY_URL = Symbol.for("openclaw.proxyFetch.proxyUrl");
 type ProxyFetchWithMetadata = typeof fetch & {
   [PROXY_FETCH_PROXY_URL]?: string;
 };
-
 type NoProxyEntry = {
   pattern: string;
   port?: string;
