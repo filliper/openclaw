@@ -10,6 +10,7 @@ Docs: https://docs.openclaw.ai
 - Git/runtime state: ignore the gateway-generated `.dev-state` file so local runtime state does not show up as untracked repo noise. (#41848) Thanks @smysle.
 - ACP/sessions_spawn: add optional `resumeSessionId` for `runtime: "acp"` so spawned ACP sessions can resume an existing ACPX/Codex conversation instead of always starting fresh. (#41847) Thanks @pejmanjohn.
 - Exec/child commands: mark child command environments with `OPENCLAW_CLI` so subprocesses can detect when they were launched from the OpenClaw CLI. (#41411) Thanks @vincentkoc.
+- Tools/Brave web search: add `goggles` parameter so `web_search` can apply [Brave Goggles](https://search.brave.com/help/goggles) custom filtering and ranking rules (inline or hosted URL) in both web and llm-context modes.
 
 ### Breaking
 
