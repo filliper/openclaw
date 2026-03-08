@@ -1671,6 +1671,7 @@ export async function runEmbeddedAttempt(
 
       let promptError: unknown = null;
       let promptErrorSource: "prompt" | "compaction" | null = null;
+      let llmCallBlocked = false;
       const prePromptMessageCount = activeSession.messages.length;
       try {
         const promptStartedAt = Date.now();
@@ -1834,6 +1835,9 @@ export async function runEmbeddedAttempt(
           const { BeforeLlmCallBlockError } = await import("./hook-stream-wrapper.js");
           if (err instanceof BeforeLlmCallBlockError) {
             log.info(`LLM call blocked by before_llm_call hook: ${err.message}`);
+            // Mark as blocked so payload builder doesn't fall back to lastAssistant
+            // from session history (which would replay a stale response).
+            llmCallBlocked = true;
           } else {
             promptError = err;
             promptErrorSource = "prompt";
@@ -2070,10 +2074,14 @@ export async function runEmbeddedAttempt(
         params.abortSignal?.removeEventListener?.("abort", onAbort);
       }
 
-      const lastAssistant = messagesSnapshot
-        .slice()
-        .toReversed()
-        .find((m) => m.role === "assistant");
+      // When the LLM call was blocked by before_llm_call hook, suppress
+      // lastAssistant to prevent payloads.ts from replaying a stale response.
+      const lastAssistant = llmCallBlocked
+        ? undefined
+        : messagesSnapshot
+            .slice()
+            .toReversed()
+            .find((m) => m.role === "assistant");
 
       const toolMetasNormalized = toolMetas
         .filter(
