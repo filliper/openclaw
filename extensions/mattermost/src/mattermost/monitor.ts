@@ -1665,6 +1665,12 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
     const flushPendingPatch = async () => {
       stopPatchInterval();
       if (!blockStreamingClient) return;
+      // Wait for any in-flight interval tick to complete before issuing the flush's own
+      // network call, so concurrent PUTs don't race for the same post on the server.
+      const flushDeadline = Date.now() + 2000;
+      while (patchSending && Date.now() < flushDeadline) {
+        await new Promise<void>((r) => setTimeout(r, 20));
+      }
       const text = pendingPatchText;
       if (!text || text === lastSentText) return;
       lastSentText = text;
@@ -1762,6 +1768,8 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           // Final: patch the streamed message with the authoritative complete text,
           // or fall back to a new message (with orphan cleanup) if patching fails.
           // Media attachments are sent as a follow-up message after the text patch.
+          // TODO: chunk text before final edit if text.length > textLimit to avoid exceeding
+          // Mattermost post size limits on very long responses (tracked in GH issue).
           if (isFinal && streamMessageId && text) {
             try {
               await updateMattermostPost(blockStreamingClient!, streamMessageId, { message: text });
@@ -1783,6 +1791,13 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
                 replyToId: threadRootId,
                 mediaUrl: mediaUrls[0],
               });
+              for (const mediaUrl of mediaUrls.slice(1)) {
+                await sendMessageMattermost(to, "", {
+                  accountId: account.accountId,
+                  replyToId: threadRootId,
+                  mediaUrl,
+                });
+              }
               return;
             }
             streamMessageId = null;
@@ -1799,7 +1814,17 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
 
           if (isFinal) {
             stopPatchInterval();
-            streamMessageId = null;
+            // Best-effort cleanup: delete the orphaned streaming message if we have one
+            // but no final text to patch it with (e.g. media-only response).
+            if (streamMessageId && blockStreamingClient) {
+              const orphanId = streamMessageId;
+              streamMessageId = null;
+              deleteMattermostPost(blockStreamingClient, orphanId).catch(() => {
+                // Ignore — delivering media takes priority
+              });
+            } else {
+              streamMessageId = null;
+            }
             pendingPatchText = "";
             lastSentText = "";
             patchSending = false;
