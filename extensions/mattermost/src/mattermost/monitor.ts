@@ -1642,6 +1642,11 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
     let lastSentText = "";
     let patchInterval: ReturnType<typeof setInterval> | null = null;
     let patchSending = false; // prevents concurrent network calls
+    // Resolved reply target for the streaming message — mirrors what the non-streaming
+    // deliver path computes via resolveMattermostReplyRootId. Defaults to threadRootId
+    // (for messages already in a thread) and updated to payload.replyToId on the first
+    // onPartialReply chunk so top-level replies are also threaded correctly.
+    let streamReplyToId: string | undefined = threadRootId;
     const STREAM_PATCH_INTERVAL_MS = 200;
 
     // Use the already-resolved baseUrl/botToken from the outer scope
@@ -1678,7 +1683,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         try {
           const result = await sendMessageMattermost(to, text, {
             accountId: account.accountId,
-            replyToId: threadRootId,
+            replyToId: streamReplyToId,
           });
           streamMessageId = result.messageId;
           runtime.log?.(`stream-patch started ${streamMessageId}`);
@@ -1719,7 +1724,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
               try {
                 const result = await sendMessageMattermost(to, text, {
                   accountId: account.accountId,
-                  replyToId: threadRootId,
+                  replyToId: streamReplyToId,
                 });
                 streamMessageId = result.messageId;
                 runtime.log?.(`stream-patch started ${streamMessageId}`);
@@ -1788,13 +1793,19 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
               }
               await sendMessageMattermost(to, text, {
                 accountId: account.accountId,
-                replyToId: threadRootId,
+                replyToId: resolveMattermostReplyRootId({
+                  threadRootId,
+                  replyToId: payload.replyToId,
+                }),
                 mediaUrl: mediaUrls[0],
               });
               for (const mediaUrl of mediaUrls.slice(1)) {
                 await sendMessageMattermost(to, "", {
                   accountId: account.accountId,
-                  replyToId: threadRootId,
+                  replyToId: resolveMattermostReplyRootId({
+                    threadRootId,
+                    replyToId: payload.replyToId,
+                  }),
                   mediaUrl,
                 });
               }
@@ -1805,7 +1816,10 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             for (const mediaUrl of mediaUrls) {
               await sendMessageMattermost(to, "", {
                 accountId: account.accountId,
-                replyToId: threadRootId,
+                replyToId: resolveMattermostReplyRootId({
+                  threadRootId,
+                  replyToId: payload.replyToId,
+                }),
                 mediaUrl,
               });
             }
@@ -1889,6 +1903,11 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             // so heading/paragraph formatting is always correct.
             onPartialReply: blockStreamingClient
               ? (payload: ReplyPayload) => {
+                  // Capture the resolved reply target on the first partial so streamed
+                  // posts land in the correct thread even for top-level inbound messages.
+                  if (!streamReplyToId && payload.replyToId) {
+                    streamReplyToId = payload.replyToId.trim() || undefined;
+                  }
                   const rawText = payload.text ?? "";
                   const fullText = core.channel.text.convertMarkdownTables(rawText, tableMode);
                   if (fullText) {
