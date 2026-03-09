@@ -35,12 +35,12 @@ Docs: https://docs.openclaw.ai
 - Auth/cooldowns: reset expired auth-profile cooldown error counters before computing the next backoff so stale on-disk counters do not re-escalate into long cooldown loops after expiry. (#41028) thanks @zerone0x.
 - Gateway/node pending drain followup: keep `hasMore` true when the deferred baseline status item still needs delivery, and avoid allocating empty pending-work state for drain-only nodes with no queued work. (#41429) Thanks @mbelinky.
 - ACP/bridge mode: reject unsupported per-session MCP server setup and propagate rejected session-mode changes so IDE clients see explicit bridge limitations instead of silent success. (#41424) Thanks @mbelinky.
-- Agents/context-engine compaction: guard thrown engine-owned overflow compaction attempts and fire compaction hooks for `ownsCompaction` engines so overflow recovery no longer crashes and plugin subscribers still observe compact runs. (#41361) thanks @davidrudduck.
 - ACP/session UX: replay stored user and assistant text on `loadSession`, expose Gateway-backed session controls and metadata, and emit approximate session usage updates so IDE clients restore context more faithfully. (#41425) Thanks @mbelinky.
 - ACP/tool streaming: enrich `tool_call` and `tool_call_update` events with best-effort text content and file-location hints so IDE clients can follow bridge tool activity more naturally. (#41442) Thanks @mbelinky.
 - ACP/runtime attachments: forward normalized inbound image attachments into ACP runtime turns so ACPX sessions can preserve image prompt content on the runtime path. (#41427) Thanks @mbelinky.
 - ACP/regressions: add gateway RPC coverage for ACP lineage patching, ACPX runtime coverage for image prompt serialization, and an operator smoke-test procedure for live ACP spawn verification. (#41456) Thanks @mbelinky.
 - Agents/billing recovery: probe single-provider billing cooldowns on the existing throttle so topping up credits can recover without a manual gateway restart. (#41422) thanks @altaywtf.
+<<<<<<< HEAD
 - ACP/follow-up hardening: make session restore and prompt completion degrade gracefully on transcript/update failures, enforce bounded tool-location traversal, and skip non-image ACPX turns the runtime cannot serialize. (#41464) Thanks @mbelinky.
 - Agents/fallback observability: add structured, sanitized model-fallback decision and auth-profile failure-state events with correlated run IDs so cooldown probes and failover paths are easier to trace in logs. (#41337) thanks @altaywtf.
 - Protocol/Swift model sync: regenerate pending node work Swift bindings after the landed `node.pending.*` schema additions so generated protocol artifacts are consistent again. (#41477) Thanks @mbelinky.
@@ -70,6 +70,7 @@ Docs: https://docs.openclaw.ai
 - Telegram/outbound HTML sends: chunk long HTML-mode messages, preserve plain-text fallback and silent-delivery params across retries, and cut over to plain text when HTML chunk planning cannot safely preserve the full message. (#42240) thanks @obviyus.
 - Agents/embedded overload logs: include the failing model and provider in error-path console output, with lifecycle regression coverage for the rendered and sanitized `consoleMessage`. (#41236) thanks @jiarung.
 - Agents/failover: treat Gemini `MALFORMED_RESPONSE` stop reasons as retryable timeouts so preview-model enum drift falls back cleanly instead of crashing the run, without also reclassifying malformed function-call errors. (#42292) Thanks @jnMetaCode.
+- Agents/context-engine compaction: guard thrown engine-owned overflow compaction attempts and fire compaction hooks for `ownsCompaction` engines so overflow recovery no longer crashes and plugin subscribers still observe compact runs. (#41361) thanks @davidrudduck.
 
 ## 2026.3.8
 
