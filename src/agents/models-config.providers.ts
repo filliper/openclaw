@@ -643,7 +643,11 @@ async function resolveOllamaImplicitProvider(
 async function resolveVllmImplicitProvider(
   ctx: ImplicitProviderContext,
 ): Promise<Record<string, ProviderConfig> | undefined> {
-  if (ctx.explicitProviders?.vllm) {
+  const hasExplicitManagedVllmProvider = Object.keys(ctx.explicitProviders ?? {}).some((key) => {
+    const normalized = key.trim().toLowerCase();
+    return normalized === "vllm" || normalized.startsWith("vllm-");
+  });
+  if (hasExplicitManagedVllmProvider) {
     return undefined;
   }
   const { apiKey: vllmKey, discoveryApiKey } = ctx.resolveProviderApiKey("vllm");
