@@ -55,6 +55,15 @@ type ResolutionLimits = {
 
 type ProviderResolutionOutput = Map<string, unknown>;
 
+class WindowsAclUnavailableError extends Error {
+  readonly code = "WINDOWS_ACL_UNAVAILABLE" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "WindowsAclUnavailableError";
+  }
+}
+
 export class SecretProviderResolutionError extends Error {
   readonly scope = "provider" as const;
   readonly source: SecretRefSource;
@@ -257,8 +266,8 @@ async function assertSecurePath(params: {
   }
 
   if (process.platform === "win32" && perms.source === "unknown") {
-    throw new Error(
-      `${params.label} ACL verification unavailable on Windows for ${effectivePath}. Set allowInsecurePath=true for this provider to bypass this check when the path is trusted.`,
+    throw new WindowsAclUnavailableError(
+      `${params.label} ACL verification unavailable on Windows for ${effectivePath}. Set allowInsecurePath=true for this provider to bypass this specific check when the path is trusted.`,
     );
   }
 
@@ -286,10 +295,32 @@ async function readFileProviderPayload(params: {
 
   const filePath = resolveUserPath(params.providerConfig.path);
   const readPromise = (async () => {
-    const secureFilePath = await assertSecurePath({
-      targetPath: filePath,
-      label: `secrets.providers.${params.providerName}.path`,
-    });
+    if (params.providerConfig.allowInsecurePath && process.platform !== "win32") {
+      throw new Error(
+        `secrets.providers.${params.providerName}.path allowInsecurePath is only supported on Windows.`,
+      );
+    }
+    const label = `secrets.providers.${params.providerName}.path`;
+    let secureFilePath: string;
+    try {
+      secureFilePath = await assertSecurePath({
+        targetPath: filePath,
+        label,
+      });
+    } catch (error) {
+      const isWindowsAclFallback =
+        params.providerConfig.allowInsecurePath &&
+        process.platform === "win32" &&
+        error instanceof WindowsAclUnavailableError;
+      if (!isWindowsAclFallback) {
+        throw error;
+      }
+      secureFilePath = await assertSecurePath({
+        targetPath: filePath,
+        label,
+        allowInsecurePath: true,
+      });
+    }
     const timeoutMs = normalizePositiveInt(
       params.providerConfig.timeoutMs,
       DEFAULT_FILE_TIMEOUT_MS,

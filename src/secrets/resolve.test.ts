@@ -40,6 +40,7 @@ describe("secret ref resolver", () => {
     command: string;
     passEnv?: string[];
     jsonOnly?: boolean;
+    allowInsecurePath?: boolean;
     allowSymlinkCommand?: boolean;
     trustedDirs?: string[];
     args?: string[];
@@ -49,6 +50,7 @@ describe("secret ref resolver", () => {
     path: string;
     mode: "json" | "singleValue";
     timeoutMs?: number;
+    allowInsecurePath?: boolean;
   };
 
   function createExecProviderConfig(
@@ -188,8 +190,43 @@ describe("secret ref resolver", () => {
     expect(value).toBe("sk-file-value");
   });
 
+  itPosix("rejects file-provider allowInsecurePath outside Windows", async () => {
+    const root = await createCaseDir("file-insecure-flag");
+    const filePath = path.join(root, "secrets.json");
+    await writeSecureFile(
+      filePath,
+      JSON.stringify({
+        providers: {
+          openai: {
+            apiKey: "sk-file-value", // pragma: allowlist secret
+          },
+        },
+      }),
+    );
+
+    await expect(
+      resolveSecretRefString(
+        { source: "file", provider: "filemain", id: "/providers/openai/apiKey" },
+        {
+          config: {
+            secrets: {
+              providers: {
+                filemain: createFileProviderConfig(filePath, { allowInsecurePath: true }),
+              },
+            },
+          },
+        },
+      ),
+    ).rejects.toThrow(/allowInsecurePath is only supported on Windows/i);
+  });
+
   itPosix("resolves exec refs with protocolVersion 1 response", async () => {
     const value = await resolveExecSecret(execProtocolV1ScriptPath);
+    expect(value).toBe("value:openai/api-key");
+  });
+
+  itPosix("allows exec-provider allowInsecurePath outside Windows", async () => {
+    const value = await resolveExecSecret(execProtocolV1ScriptPath, { allowInsecurePath: true });
     expect(value).toBe("value:openai/api-key");
   });
 
