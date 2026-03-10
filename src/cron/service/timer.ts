@@ -28,6 +28,7 @@ import { DEFAULT_JOB_TIMEOUT_MS, resolveCronJobTimeoutMs } from "./timeout-polic
 export { DEFAULT_JOB_TIMEOUT_MS } from "./timeout-policy.js";
 
 const MAX_TIMER_DELAY_MS = 60_000;
+const MAX_SET_TIMEOUT_MS = 2_147_483_647;
 
 /**
  * Minimum gap between consecutive fires of the same cron job.  This is a
@@ -65,8 +66,11 @@ type StartupCatchupPlan = {
 export async function executeJobCoreWithTimeout(
   state: CronServiceState,
   job: CronJob,
+  opts?: { timeoutMsOverride?: number },
 ): Promise<Awaited<ReturnType<typeof executeJobCore>>> {
-  const jobTimeoutMs = resolveCronJobTimeoutMs(job);
+  const jobTimeoutMs = normalizeCronTimerDelayMs(
+    opts?.timeoutMsOverride ?? resolveCronJobTimeoutMs(job),
+  );
   if (typeof jobTimeoutMs !== "number") {
     return await executeJobCore(state, job);
   }
@@ -88,6 +92,30 @@ export async function executeJobCoreWithTimeout(
       clearTimeout(timeoutId);
     }
   }
+}
+
+function normalizeCronTimerDelayMs(timeoutMs: number | undefined): number | undefined {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)) {
+    return undefined;
+  }
+  if (timeoutMs <= 0) {
+    return undefined;
+  }
+  return Math.min(MAX_SET_TIMEOUT_MS, Math.max(1, Math.floor(timeoutMs)));
+}
+
+function resolveDueJobHardTimeoutMs(job: CronJob): number | undefined {
+  const executionTimeoutMs = normalizeCronTimerDelayMs(resolveCronJobTimeoutMs(job));
+  if (typeof executionTimeoutMs !== "number") {
+    return undefined;
+  }
+  if (job.sessionTarget !== "isolated" || job.payload.kind !== "agentTurn") {
+    return executionTimeoutMs;
+  }
+  // Queue wait on the shared cron lane should not consume the isolated run's
+  // execution budget, but timer-driven jobs still need a separate hard guard so
+  // a wedged downstream lane cannot block the scheduler indefinitely.
+  return normalizeCronTimerDelayMs(executionTimeoutMs + DEFAULT_JOB_TIMEOUT_MS);
 }
 
 function resolveRunConcurrency(state: CronServiceState): number {
@@ -632,7 +660,9 @@ export async function onTimer(state: CronServiceState) {
       const jobTimeoutMs = resolveCronJobTimeoutMs(job);
 
       try {
-        const result = await executeJobCoreWithTimeout(state, job);
+        const result = await executeJobCoreWithTimeout(state, job, {
+          timeoutMsOverride: resolveDueJobHardTimeoutMs(job),
+        });
         return { jobId: id, ...result, startedAt, endedAt: state.deps.nowMs() };
       } catch (err) {
         const errorText = isAbortError(err) ? timeoutErrorMessage() : String(err);
@@ -1130,28 +1160,78 @@ export async function executeJobCore(
     return resolveAbortError();
   }
 
-  const res = await state.deps.runIsolatedAgentJob({
-    job,
-    message: job.payload.message,
-    abortSignal,
-  });
-
-  if (abortSignal?.aborted) {
-    return { status: "error", error: timeoutErrorMessage() };
-  }
-
-  return {
-    status: res.status,
-    error: res.error,
-    summary: res.summary,
-    delivered: res.delivered,
-    deliveryAttempted: res.deliveryAttempted,
-    sessionId: res.sessionId,
-    sessionKey: res.sessionKey,
-    model: res.model,
-    provider: res.provider,
-    usage: res.usage,
+  const isolatedTimeoutMs = normalizeCronTimerDelayMs(resolveCronJobTimeoutMs(job));
+  const isolatedAbortController = new AbortController();
+  let isolatedTimeoutId: NodeJS.Timeout | undefined;
+  let isolatedTimeoutReject: ((reason?: unknown) => void) | undefined;
+  let isolatedTimeoutStarted = false;
+  const combinedAbortSignal = abortSignal
+    ? AbortSignal.any([abortSignal, isolatedAbortController.signal])
+    : isolatedAbortController.signal;
+  const isolatedTimeoutPromise =
+    typeof isolatedTimeoutMs === "number"
+      ? new Promise<never>((_, reject) => {
+          isolatedTimeoutReject = reject;
+        })
+      : undefined;
+  const startIsolatedTimeout = () => {
+    if (isolatedTimeoutStarted || typeof isolatedTimeoutMs !== "number") {
+      return;
+    }
+    isolatedTimeoutStarted = true;
+    isolatedTimeoutId = setTimeout(() => {
+      isolatedAbortController.abort(timeoutErrorMessage());
+      isolatedTimeoutReject?.(new Error(timeoutErrorMessage()));
+    }, isolatedTimeoutMs);
   };
+
+  try {
+    const runPromise = state.deps.runIsolatedAgentJob({
+      job,
+      message: job.payload.message,
+      abortSignal: combinedAbortSignal,
+      onExecutionStart: startIsolatedTimeout,
+    });
+    const res = isolatedTimeoutPromise
+      ? await Promise.race([runPromise, isolatedTimeoutPromise])
+      : await runPromise;
+
+    const isolatedTimedOut =
+      isolatedAbortController.signal.aborted &&
+      isolatedAbortController.signal.reason === timeoutErrorMessage();
+    const upstreamTimedOut =
+      abortSignal?.aborted === true && abortSignal.reason === timeoutErrorMessage();
+    if (isolatedTimedOut || upstreamTimedOut) {
+      return { status: "error", error: timeoutErrorMessage() };
+    }
+
+    return {
+      status: res.status,
+      error: res.error,
+      summary: res.summary,
+      delivered: res.delivered,
+      deliveryAttempted: res.deliveryAttempted,
+      sessionId: res.sessionId,
+      sessionKey: res.sessionKey,
+      model: res.model,
+      provider: res.provider,
+      usage: res.usage,
+    };
+  } catch (err) {
+    const isolatedTimedOut =
+      isolatedAbortController.signal.aborted &&
+      isolatedAbortController.signal.reason === timeoutErrorMessage();
+    const upstreamTimedOut =
+      abortSignal?.aborted === true && abortSignal.reason === timeoutErrorMessage();
+    if (isolatedTimedOut || upstreamTimedOut) {
+      return { status: "error", error: timeoutErrorMessage() };
+    }
+    throw err;
+  } finally {
+    if (isolatedTimeoutId) {
+      clearTimeout(isolatedTimeoutId);
+    }
+  }
 }
 
 /**
