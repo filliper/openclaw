@@ -831,6 +831,15 @@ export async function textToSpeechTelephony(params: {
           throw new Error("plugin TTS result missing required sampleRate for telephony");
         }
 
+        // Telephony pipeline expects PCM format (audio/l16 or audio/raw)
+        const isPcm =
+          result.mime.startsWith("audio/l16") ||
+          result.mime === "audio/raw" ||
+          result.mime.startsWith("audio/pcm");
+        if (!isPcm) {
+          throw new Error(`plugin TTS result must be PCM format for telephony, got ${result.mime}`);
+        }
+
         return {
           success: true,
           audioBuffer: result.audio,

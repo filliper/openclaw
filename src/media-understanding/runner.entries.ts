@@ -452,12 +452,20 @@ export async function runProviderEntry(params: {
     });
     const provider = getMediaUnderstandingProvider(providerId, params.providerRegistry);
 
-    // Check if this is a plugin provider (has describeImage directly)
-    const isPluginProvider = !!provider?.describeImage;
+    // Check if this is a plugin provider by checking the active plugin registry
+    const { getActivePluginRegistry } = await import("../plugins/runtime.js");
+    const { normalizeProviderId } = await import("../agents/model-selection.js");
+    const pluginRegistry = getActivePluginRegistry();
+    const isPluginProvider =
+      pluginRegistry?.mediaProviders.some(
+        (entry: { provider: { id: string } }) =>
+          normalizeProviderId(entry.provider.id) === providerId,
+      ) ?? false;
+
     let result: { text: string; model?: string };
 
     if (isPluginProvider && provider?.describeImage) {
-      // For plugin providers, pass request with apiKey (plugins get credentials from config/env)
+      // For plugin providers, pass empty apiKey - plugins get credentials from their own config
       // Cast to any since plugin type differs from core type
       result = await (
         provider.describeImage as (req: {
