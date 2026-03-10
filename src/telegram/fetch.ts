@@ -165,7 +165,20 @@ function shouldRetryWithIpv4Fallback(err: unknown): boolean {
   return true;
 }
 
-function applyTelegramIpv4Fallback(): void {
+function hasExplicitNetworkConfig(network?: TelegramNetworkConfig): boolean {
+  return (
+    typeof network?.autoSelectFamily === "boolean" ||
+    typeof (network as { dnsResultOrder?: string } | undefined)?.dnsResultOrder === "string"
+  );
+}
+
+function applyTelegramIpv4Fallback(network?: TelegramNetworkConfig): void {
+  if (hasExplicitNetworkConfig(network)) {
+    log.warn(
+      "fetch fallback: skipping IPv4 override because channels.telegram.network is explicitly configured",
+    );
+    return;
+  }
   applyTelegramNetworkWorkarounds({
     autoSelectFamily: false,
     dnsResultOrder: "ipv4first",
@@ -193,7 +206,7 @@ export function resolveTelegramFetch(
       return await sourceFetch(input, init);
     } catch (err) {
       if (shouldRetryWithIpv4Fallback(err)) {
-        applyTelegramIpv4Fallback();
+        applyTelegramIpv4Fallback(options?.network);
         return sourceFetch(input, init);
       }
       throw err;
