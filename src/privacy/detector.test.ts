@@ -92,7 +92,7 @@ describe("PrivacyDetector", () => {
   describe("JWT detection", () => {
     it("detects JWT tokens", () => {
       const jwt =
-        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"; // pragma: allowlist secret
       const result = detector.detect(jwt);
       expect(result.hasPrivacyRisk).toBe(true);
       expect(result.matches.some((m) => m.type === "jwt_token")).toBe(true);

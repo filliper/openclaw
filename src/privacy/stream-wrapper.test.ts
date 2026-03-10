@@ -29,9 +29,9 @@ describe("stream-wrapper integration", () => {
 
     it("filters and restores API keys", () => {
       const ctx = createPrivacyFilterContext("test-session");
-      const original = "Use this key: sk-proj1234567890abcdefghijklm";
+      const original = "Use this key: sk-proj1234567890abcdefghijklm"; // pragma: allowlist secret
       const filtered = filterText(original, ctx);
-      expect(filtered).not.toContain("sk-proj1234567890abcdefghijklm");
+      expect(filtered).not.toContain("sk-proj1234567890abcdefghijklm"); // pragma: allowlist secret
 
       const restored = restoreText(filtered, ctx);
       expect(restored).toBe(original);
@@ -105,7 +105,7 @@ describe("stream-wrapper integration", () => {
 
       const filtered = filterMessages(messages, ctx);
       const msg = filtered[0] as { role: string; content: Array<{ type: string; text: string }> };
-      expect(msg.content[0].text).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
+      expect(msg.content[0].text).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890"); // pragma: allowlist secret
     });
 
     it("does not modify system messages", () => {
@@ -145,7 +145,7 @@ describe("stream-wrapper integration", () => {
 
       expect(filtered).not.toContain("admin@test.com");
       expect(filtered).not.toContain("13900001234");
-      expect(filtered).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
+      expect(filtered).not.toContain("sk-abcdefghijklmnopqrstuvwxyz"); // pragma: allowlist secret
 
       const restored = restoreText(filtered, ctx);
       expect(restored).toBe(text);
@@ -161,7 +161,10 @@ describe("stream-wrapper integration", () => {
         { text: "user@gmail.com", type: "email" },
         { text: "13812345678", type: "phone_cn" },
         { text: "password=MySecret123", type: "password_assignment" },
-        { text: "ghp_1234567890abcdefghijklmnopqrstuvwxyz1234", type: "github_token" },
+        {
+          text: "ghp_1234567890abcdefghijklmnopqrstuvwxyz1234", // pragma: allowlist secret
+          type: "github_token",
+        },
       ];
 
       for (const input of inputs) {

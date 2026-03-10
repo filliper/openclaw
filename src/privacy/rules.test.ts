@@ -11,18 +11,18 @@ const detector = new PrivacyDetector("extended");
 // These are NOT real secrets — they are constructed at runtime for regex pattern testing.
 const T = {
   // Developer platforms
-  openai: ["sk-proj", "abc123def456ghi789jklmno"].join("-"),
-  anthropic: ["sk-ant-api03", "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"].join("-"),
+  openai: ["sk-proj", "abc123def456ghi789jklmno"].join("-"), // pragma: allowlist secret
+  anthropic: ["sk-ant-api03", "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"].join("-"), // pragma: allowlist secret
   github: ["ghp", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].join("_"),
   gitlab: ["glpat", "ABCDEFGHIJKLMNOPQRSTU"].join("-"),
   npm: ["npm", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].join("_"),
   pypi: ["pypi", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"].join("-"),
   // Cloud providers
-  google: ["AIzaSyA", "1234567890ABCDEFGHIJKLMNOPQRSTUV"].join(""),
-  aws_access: ["AKIA", "IOSFODNN7EXAMPLE"].join(""),
-  aws_secret: ["aws secret key = '", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "'"].join(""),
-  alibaba: ["LTAI", "abcdef123456789"].join(""),
-  tencent: ["AKID", "abcdefghijklmnopqrstuvwxyz1234567890"].join(""),
+  google: ["AIzaSyA", "1234567890ABCDEFGHIJKLMNOPQRSTUV"].join(""), // pragma: allowlist secret
+  aws_access: ["AKIA", "IOSFODNN7EXAMPLE"].join(""), // pragma: allowlist secret
+  aws_secret: ["aws secret key = '", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "'"].join(""), // pragma: allowlist secret
+  alibaba: ["LTAI", "abcdef123456789"].join(""), // pragma: allowlist secret
+  tencent: ["AKID", "abcdefghijklmnopqrstuvwxyz1234567890"].join(""), // pragma: allowlist secret
   azure_storage: [
     "DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=",
     [
@@ -34,42 +34,44 @@ const T = {
     ].join(""),
     ";EndpointSuffix=core.windows.net",
   ].join(""),
-  azure_secret: ["client_secret", "abcdefghij-klmnopqrstuvwxyz1234567890"].join("="),
+  azure_secret: ["client_secret", "abcdefghij-klmnopqrstuvwxyz1234567890"].join("="), // pragma: allowlist secret
   // SaaS services
-  stripe: ["sk", "test", "1234567890ABCDEFGHIJKLMNab"].join("_"),
-  slack: ["xoxb", "1234567890123", "1234567890123", "ABCDEFGHIJKLMNOPQRSTUVWXab"].join("-"),
-  discord: ["MTIzNDU2Nzg5MDEyMzQ1Njc4", "ABCDEf", "ABCDEFGHIJKLMNOPQRSTUVWXYZab"].join("."),
+  stripe: ["sk", "test", "1234567890ABCDEFGHIJKLMNab"].join("_"), // pragma: allowlist secret
+  slack: ["xoxb", "1234567890123", "1234567890123", "ABCDEFGHIJKLMNOPQRSTUVWXab"].join("-"), // pragma: allowlist secret
+  discord: ["MTIzNDU2Nzg5MDEyMzQ1Njc4", "ABCDEf", "ABCDEFGHIJKLMNOPQRSTUVWXYZab"].join("."), // pragma: allowlist secret
   sendgrid: ["SG", "abcdefghijklmnopqrstuv", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq"].join(
     ".",
-  ),
-  twilio: ["SK", "1234567890abcdef", "1234567890abcdef"].join(""),
-  shopify: ["shpat", "1234567890abcdef1234567890abcdef"].join("_"),
+  ), // pragma: allowlist secret
+  twilio: ["SK", "1234567890abcdef", "1234567890abcdef"].join(""), // pragma: allowlist secret
+  shopify: ["shpat", "1234567890abcdef1234567890abcdef"].join("_"), // pragma: allowlist secret
   square: ["sq0atp", "ABCDEFghijklmnopqrstuv"].join("-"),
-  newrelic: ["NRAK", "ABCDEFGHIJKLMNOPQRSTUVWXYZA"].join("-"),
-  mailchimp: ["abcdef1234567890abcdef1234567890", "us12"].join("-"),
-  sentry: ["https://abcdef1234567890abcdef1234567890", "o12345.ingest.sentry.io/1234567"].join("@"),
+  newrelic: ["NRAK", "ABCDEFGHIJKLMNOPQRSTUVWXYZA"].join("-"), // pragma: allowlist secret
+  mailchimp: ["abcdef1234567890abcdef1234567890", "us12"].join("-"), // pragma: allowlist secret
+  sentry: ["https://abcdef1234567890abcdef1234567890", "o12345.ingest.sentry.io/1234567"].join("@"), // pragma: allowlist secret
   // Auth tokens
   jwt: [
+    // pragma: allowlist secret
     "eyJhbGciOiJIUzI1NiJ9",
     "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
-    "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+    "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", // pragma: allowlist secret
   ].join("."),
   bearer: ["Bearer", "abcdefghij1234567890abcdefghij"].join(" "),
-  basic_auth: ["Authorization: Basic", "dXNlcm5hbWU6cGFzc3dvcmQ=aa"].join(" "),
+  basic_auth: ["Authorization: Basic", "dXNlcm5hbWU6cGFzc3dvcmQ=aa"].join(" "), // pragma: allowlist secret
   generic_api: ["api_key", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].join("="),
   oauth_secret: ["client_secret", "ABCDEFGHIJKLMNOPQRSTx"].join("="),
   oauth_refresh: ["refresh_token", "ABCDEFGHIJKLMNOPQRSTx"].join("="),
   session: ["session_id", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].join("="),
   // Crypto
   private_key_hex: [
+    // pragma: allowlist secret
     "私钥: ",
-    "4a2b8c1d3e5f6a7b",
-    "8c9d0e1f2a3b4c5d",
-    "6e7f8a9b0c1d2e3f",
-    "4a5b6c7d8e9f0a1b",
+    "4a2b8c1d3e5f6a7b", // pragma: allowlist secret
+    "8c9d0e1f2a3b4c5d", // pragma: allowlist secret
+    "6e7f8a9b0c1d2e3f", // pragma: allowlist secret
+    "4a5b6c7d8e9f0a1b", // pragma: allowlist secret
   ].join(""),
-  ethereum: ["以太坊钱包 0x", "1234567890abcdef", "1234567890abcdef", "12345678"].join(""),
-  high_entropy: ["7f2a9c4b", "1e8d6a3f", "5c0b9e2d", "4a1f8c6b"].join(""),
+  ethereum: ["以太坊钱包 0x", "1234567890abcdef", "1234567890abcdef", "12345678"].join(""), // pragma: allowlist secret
+  high_entropy: ["7f2a9c4b", "1e8d6a3f", "5c0b9e2d", "4a1f8c6b"].join(""), // pragma: allowlist secret
 };
 
 /** Helper: assert at least one match of the given type. */
@@ -153,28 +155,28 @@ describe("all rule types coverage", () => {
   it("session_token", () => expectType(T.session, "session_token"));
 
   // ─── SSH / Crypto keys ───
-  it("ssh_private_key", () => expectType("-----BEGIN RSA PRIVATE KEY-----", "ssh_private_key"));
+  it("ssh_private_key", () => expectType("-----BEGIN RSA PRIVATE KEY-----", "ssh_private_key")); // pragma: allowlist secret
   it("private_key_hex", () => expectType(T.private_key_hex, "private_key_hex"));
   it("ethereum_address", () => expectType(T.ethereum, "ethereum_address"));
 
   // ─── Database URLs ───
   it("database_url_mysql", () =>
-    expectType("mysql://root:pass@localhost/mydb", "database_url_mysql"));
+    expectType("mysql://root:pass@localhost/mydb", "database_url_mysql")); // pragma: allowlist secret
   it("database_url_postgresql", () =>
-    expectType("postgresql://user:pass@db.host/prod", "database_url_postgresql"));
+    expectType("postgresql://user:pass@db.host/prod", "database_url_postgresql")); // pragma: allowlist secret
   it("database_url_mongodb", () =>
-    expectType("mongodb://user:pass@cluster.host/db", "database_url_mongodb"));
+    expectType("mongodb://user:pass@cluster.host/db", "database_url_mongodb")); // pragma: allowlist secret
   it("redis_url", () => expectType("redis://:secret@redis.host:6379/", "redis_url"));
   it("jdbc_connection", () => expectType("jdbc:mysql://host:3306/db?user=root", "jdbc_connection"));
   it("connection_string_dotnet", () =>
-    expectType("Server=myhost;Database=mydb;Password=secret", "connection_string_dotnet"));
+    expectType("Server=myhost;Database=mydb;Password=secret", "connection_string_dotnet")); // pragma: allowlist secret
   it("elasticsearch_url", () =>
-    expectType("https://admin:secret@es.cluster.local:9200", "elasticsearch_url"));
-  it("rabbitmq_url", () => expectType("amqp://guest:guest@rabbitmq.host/vhost", "rabbitmq_url"));
+    expectType("https://admin:secret@es.cluster.local:9200", "elasticsearch_url")); // pragma: allowlist secret
+  it("rabbitmq_url", () => expectType("amqp://guest:guest@rabbitmq.host/vhost", "rabbitmq_url")); // pragma: allowlist secret
 
   // ─── URLs with credentials ───
   it("url_with_credentials", () =>
-    expectType("https://user:pass@api.example.com/v1", "url_with_credentials"));
+    expectType("https://user:pass@api.example.com/v1", "url_with_credentials")); // pragma: allowlist secret
 
   // ─── Network ───
   it("ipv4_private", () => expectType("192.168.1.100", "ipv4_private"));
