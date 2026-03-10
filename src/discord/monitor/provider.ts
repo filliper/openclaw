@@ -658,7 +658,10 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       botUserId = botUser?.id;
       botUserName = botUser?.username?.trim() || botUser?.globalName?.trim() || undefined;
     } catch (err) {
-      runtime.error?.(danger(`discord: failed to fetch bot identity: ${String(err)}`));
+      throw new Error(`Failed to fetch bot identity: ${String(err)}`, { cause: err });
+    }
+    if (!botUserId) {
+      throw new Error("Failed to resolve Discord bot user id");
     }
 
     if (voiceEnabled) {
