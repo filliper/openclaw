@@ -495,6 +495,9 @@ export const telegramPlugin: ChannelPlugin<ResolvedTelegramAccount, TelegramProb
         Object.entries(groups ?? {}).some(
           ([key, value]) => key !== "*" && value?.requireMention === false,
         );
+      const suppressPrivacyModeWarning =
+        Boolean(cfg.channels?.telegram?.accounts?.[account.accountId]?.suppressPrivacyModeWarning) ||
+        Boolean(cfg.channels?.telegram?.suppressPrivacyModeWarning);
       return {
         accountId: account.accountId,
         name: account.name,
@@ -509,6 +512,7 @@ export const telegramPlugin: ChannelPlugin<ResolvedTelegramAccount, TelegramProb
         probe,
         audit,
         allowUnmentionedGroups,
+        suppressPrivacyModeWarning,
         lastInboundAt: runtime?.lastInboundAt ?? null,
         lastOutboundAt: runtime?.lastOutboundAt ?? null,
       };
