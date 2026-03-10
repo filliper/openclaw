@@ -18,6 +18,7 @@ describe("buildRescueProfileEnv", () => {
   it("preserves daemon service identity overrides", () => {
     const env = buildRescueProfileEnv("work", {
       HOME: "/home/tester",
+      OPENCLAW_PROFILE: "work",
       OPENCLAW_LAUNCHD_LABEL: "com.example.openclaw-work",
       OPENCLAW_SYSTEMD_UNIT: "openclaw-work-custom.service",
       OPENCLAW_WINDOWS_TASK_NAME: "OpenClaw Gateway (work custom)",
@@ -26,6 +27,20 @@ describe("buildRescueProfileEnv", () => {
     expect(env.OPENCLAW_LAUNCHD_LABEL).toBe("com.example.openclaw-work");
     expect(env.OPENCLAW_SYSTEMD_UNIT).toBe("openclaw-work-custom.service");
     expect(env.OPENCLAW_WINDOWS_TASK_NAME).toBe("OpenClaw Gateway (work custom)");
+  });
+
+  it("drops service identity overrides when deriving a different target profile", () => {
+    const env = buildRescueProfileEnv("work", {
+      HOME: "/home/tester",
+      OPENCLAW_PROFILE: "rescue",
+      OPENCLAW_LAUNCHD_LABEL: "com.example.openclaw-rescue",
+      OPENCLAW_SYSTEMD_UNIT: "openclaw-rescue-custom.service",
+      OPENCLAW_WINDOWS_TASK_NAME: "OpenClaw Gateway (rescue custom)",
+    });
+
+    expect(env.OPENCLAW_LAUNCHD_LABEL).toBeUndefined();
+    expect(env.OPENCLAW_SYSTEMD_UNIT).toBeUndefined();
+    expect(env.OPENCLAW_WINDOWS_TASK_NAME).toBeUndefined();
   });
 });
 

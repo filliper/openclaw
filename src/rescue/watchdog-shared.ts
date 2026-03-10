@@ -37,6 +37,12 @@ const RESCUE_ENV_ALLOWLIST = [
   "XDG_DATA_HOME",
   "XDG_STATE_HOME",
 ] as const;
+const RESCUE_SERVICE_IDENTITY_ENV_KEYS = [
+  "OPENCLAW_LAUNCHD_LABEL",
+  "OPENCLAW_SYSTEMD_UNIT",
+  "OPENCLAW_WINDOWS_TASK_NAME",
+] as const;
+const RESCUE_SERVICE_IDENTITY_ENV_KEY_SET = new Set<string>(RESCUE_SERVICE_IDENTITY_ENV_KEYS);
 
 export function resolveMonitoredProfileName(raw = process.env.OPENCLAW_PROFILE): string {
   const trimmed = raw?.trim();
@@ -56,7 +62,13 @@ export function buildRescueProfileEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const env: Record<string, string | undefined> = {};
+  const targetProfile = resolveMonitoredProfileName(profile);
+  const currentProfile = resolveMonitoredProfileName(baseEnv.OPENCLAW_PROFILE);
+  const preserveServiceIdentityOverrides = targetProfile === currentProfile;
   for (const key of RESCUE_ENV_ALLOWLIST) {
+    if (!preserveServiceIdentityOverrides && RESCUE_SERVICE_IDENTITY_ENV_KEY_SET.has(key)) {
+      continue;
+    }
     const value = baseEnv[key];
     if (typeof value === "string" && value.length > 0) {
       env[key] = value;
