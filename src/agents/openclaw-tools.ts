@@ -88,6 +88,12 @@ export function createOpenClawTools(
     ? createImageTool({
         config: options?.config,
         agentDir: options.agentDir,
+        agentId:
+          options?.requesterAgentIdOverride ??
+          resolveSessionAgentId({
+            sessionKey: options?.agentSessionKey,
+            config: options?.config,
+          }),
         workspaceDir,
         sandbox:
           options?.sandboxRoot && options?.sandboxFsBridge
@@ -123,6 +129,7 @@ export function createOpenClawTools(
     ? null
     : createMessageTool({
         agentAccountId: options?.agentAccountId,
+        agentId: options?.requesterAgentIdOverride,
         agentSessionKey: options?.agentSessionKey,
         config: options?.config,
         currentChannelId: options?.currentChannelId,
