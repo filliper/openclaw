@@ -10,6 +10,7 @@ import { isNonSecretApiKeyMarker } from "../agents/model-auth-markers.js";
 import { buildVllmProvider } from "../agents/models-config.providers.discovery.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
+import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 
 export const VLLM_DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1";
@@ -69,8 +70,14 @@ function createManualModelDefinition(id: string): ModelDefinitionConfig {
 
 function resolveConfiguredScanApiKey(apiKey?: string): string | undefined {
   const trimmed = apiKey?.trim();
-  if (!trimmed || isNonSecretApiKeyMarker(trimmed)) {
+  if (!trimmed) {
     return undefined;
+  }
+  if (isNonSecretApiKeyMarker(trimmed, { includeEnvVarName: false })) {
+    return undefined;
+  }
+  if (isNonSecretApiKeyMarker(trimmed)) {
+    return normalizeOptionalSecretInput(process.env[trimmed]);
   }
   return trimmed;
 }

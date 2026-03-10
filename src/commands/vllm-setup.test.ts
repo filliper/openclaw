@@ -164,6 +164,7 @@ describe("promptAndConfigureVllm", () => {
   });
 
   it("allows blank API keys when an existing endpoint is config-backed", async () => {
+    vi.stubEnv("VLLM_API_KEY", "resolved-vllm-env-key"); // pragma: allowlist secret
     buildVllmProvider.mockResolvedValue({
       baseUrl: "http://gpu-box:8000/v1",
       api: "openai-completions",
@@ -203,7 +204,7 @@ describe("promptAndConfigureVllm", () => {
     }
     expect(buildVllmProvider).toHaveBeenCalledWith({
       baseUrl: "http://gpu-box:8000/v1",
-      apiKey: "VLLM_API_KEY", // pragma: allowlist secret
+      apiKey: "resolved-vllm-env-key", // pragma: allowlist secret
     });
     expect(upsertAuthProfileWithLock).not.toHaveBeenCalled();
   });
