@@ -1,5 +1,12 @@
 import * as net from "node:net";
-import { Agent, EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
+import {
+  Agent,
+  type Dispatcher,
+  EnvHttpProxyAgent,
+  getGlobalDispatcher,
+  setGlobalDispatcher,
+} from "undici";
+import { hasProxyEnvConfigured } from "./proxy-env.js";
 
 export const DEFAULT_UNDICI_STREAM_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -105,6 +112,50 @@ export function ensureGlobalUndiciStreamTimeouts(opts?: { timeoutMs?: number }):
     lastAppliedDispatcherKey = nextKey;
   } catch {
     // Best-effort hardening only.
+  }
+}
+
+export async function withTemporaryEnvProxyDispatcher<T>(
+  fn: () => Promise<T> | T,
+  opts?: { timeoutMs?: number },
+): Promise<T> {
+  if (!hasProxyEnvConfigured()) {
+    return await fn();
+  }
+
+  let dispatcher: Dispatcher;
+  try {
+    dispatcher = getGlobalDispatcher();
+  } catch {
+    return await fn();
+  }
+
+  if (resolveDispatcherKind(dispatcher) === "env-proxy") {
+    return await fn();
+  }
+
+  const connect = resolveConnectOptions(resolveAutoSelectFamily());
+  const timeoutMsRaw = opts?.timeoutMs ?? DEFAULT_UNDICI_STREAM_TIMEOUT_MS;
+  const timeoutMs = Math.max(1, Math.floor(timeoutMsRaw));
+  try {
+    const proxyOptions = {
+      bodyTimeout: timeoutMs,
+      headersTimeout: timeoutMs,
+      ...(connect ? { connect } : {}),
+    } as ConstructorParameters<typeof EnvHttpProxyAgent>[0];
+    setGlobalDispatcher(new EnvHttpProxyAgent(proxyOptions));
+  } catch {
+    return await fn();
+  }
+
+  try {
+    return await fn();
+  } finally {
+    try {
+      setGlobalDispatcher(dispatcher);
+    } catch {
+      // Best-effort restore only.
+    }
   }
 }
 
