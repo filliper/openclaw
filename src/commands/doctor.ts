@@ -41,6 +41,7 @@ import {
 import { noteSourceInstallIssues } from "./doctor-install.js";
 import { noteMemorySearchHealth } from "./doctor-memory-search.js";
 import {
+  noteLowMemoryWarning,
   noteMacLaunchAgentOverrides,
   noteMacLaunchctlGatewayEnvOverrides,
   noteDeprecatedLegacyEnvVars,
@@ -95,6 +96,7 @@ export async function doctorCommand(
     return;
   }
 
+  noteLowMemoryWarning();
   await maybeRepairUiProtocolFreshness(runtime, prompter);
   noteSourceInstallIssues(root);
   noteDeprecatedLegacyEnvVars();
