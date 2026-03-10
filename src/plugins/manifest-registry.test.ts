@@ -232,7 +232,11 @@ describe("loadPluginManifestRegistry", () => {
     expect(countDuplicateWarnings(registry)).toBe(1);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("config");
-    expect(findWarning(registry, "ranked-duplicate")?.message).toContain(dirA);
+    const warning = registry.diagnostics.find(
+      (diagnostic) => diagnostic.pluginId === "ranked-duplicate",
+    );
+    expect(warning?.level).toBe("warn");
+    expect(warning?.source).toBe(path.join(dirA, "index.ts"));
   });
 
   it("prefers higher-precedence origins for the same physical directory (config > workspace > global > bundled)", () => {
