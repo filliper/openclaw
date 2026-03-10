@@ -47,6 +47,17 @@ const StreamingConfigSchema = z
   .strict()
   .optional();
 
+// Secret reference schema for backward compatibility
+// Supports both plain strings and structured secret references
+const SecretInputSchema = z.union([
+  z.string(),
+  z.object({
+    source: z.enum(["env", "file", "exec"]).optional(),
+    provider: z.string().optional(),
+    id: z.string().optional(),
+  }),
+]);
+
 const BlockStreamingCoalesceSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -183,9 +194,9 @@ export const FeishuAccountConfigSchema = z
     enabled: z.boolean().optional(),
     name: z.string().optional(), // Display name for this account
     appId: z.string().optional(),
-    appSecret: z.string().optional(),
+    appSecret: SecretInputSchema.optional(),
     encryptKey: z.string().optional(),
-    verificationToken: z.string().optional(),
+    verificationToken: SecretInputSchema.optional(),
     domain: FeishuDomainSchema.optional(),
     connectionMode: FeishuConnectionModeSchema.optional(),
     webhookPath: z.string().optional(),

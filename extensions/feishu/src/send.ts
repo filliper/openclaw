@@ -293,15 +293,32 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
   const content = JSON.stringify(card);
 
   if (replyToMessageId) {
-    const response = await client.im.message.reply({
-      path: { message_id: replyToMessageId },
-      data: {
-        content,
-        msg_type: "interactive",
-        ...(replyInThread ? { reply_in_thread: true } : {}),
-      },
-    });
-    if (shouldFallbackFromReplyTarget(response)) {
+    try {
+      const response = await client.im.message.reply({
+        path: { message_id: replyToMessageId },
+        data: {
+          content,
+          msg_type: "interactive",
+          ...(replyInThread ? { reply_in_thread: true } : {}),
+        },
+      });
+      if (shouldFallbackFromReplyTarget(response)) {
+        const fallback = await client.im.message.create({
+          params: { receive_id_type: receiveIdType },
+          data: {
+            receive_id: receiveId,
+            content,
+            msg_type: "interactive",
+          },
+        });
+        assertFeishuMessageApiSuccess(fallback, "Feishu card send failed");
+        return toFeishuSendResult(fallback, receiveId);
+      }
+      assertFeishuMessageApiSuccess(response, "Feishu card reply failed");
+      return toFeishuSendResult(response, receiveId);
+    } catch (err) {
+      // Catch withdrawn/not-found parent message errors and fallback to create
+      console.warn(`feishu: reply failed, falling back to create: ${String(err)}`);
       const fallback = await client.im.message.create({
         params: { receive_id_type: receiveIdType },
         data: {
@@ -313,8 +330,6 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
       assertFeishuMessageApiSuccess(fallback, "Feishu card send failed");
       return toFeishuSendResult(fallback, receiveId);
     }
-    assertFeishuMessageApiSuccess(response, "Feishu card reply failed");
-    return toFeishuSendResult(response, receiveId);
   }
 
   const response = await client.im.message.create({
@@ -471,50 +486,90 @@ export async function sendStreamingMessageFeishu(params: {
     return null;
   }
 
-  // 2. Build card data for sending
-  let cardContent = buildCardData({ content: initialContent, title, streaming: true });
+  // 2. Build card content that references the card entity
+  // CardKit entity messages use card_id to link to the entity
+  let cardContent: Record<string, unknown> = {
+    card_id: cardId, // Reference the card entity
+  };
   
   // Add mentions if provided
   if (mentions && mentions.length > 0) {
-    cardContent = buildCardData({
-      content: buildMentionedCardContent(mentions, initialContent),
-      title,
-      streaming: true,
-    });
+    // For interactive messages with mentions, we need to include mention data
+    cardContent = {
+      ...cardContent,
+      mention: {
+        mentioned_users: mentions.map(m => ({
+          id: { open_id: m.openId },
+          name: m.name,
+        })),
+      },
+    };
   }
 
-  // 3. Send card message
+  // 3. Send card message referencing the entity
   const content = JSON.stringify(cardContent);
   let response;
 
-  if (replyToMessageId) {
-    response = await client.im.message.reply({
-      path: { message_id: replyToMessageId },
-      data: {
-        content,
-        msg_type: "interactive",
-        ...(replyInThread ? { reply_in_thread: true } : {}),
-      },
-    });
-  } else {
-    response = await client.im.message.create({
+  try {
+    if (replyToMessageId) {
+      response = await client.im.message.reply({
+        path: { message_id: replyToMessageId },
+        data: {
+          content,
+          msg_type: "interactive",
+          ...(replyInThread ? { reply_in_thread: true } : {}),
+        },
+      });
+    } else {
+      response = await client.im.message.create({
+        params: { receive_id_type: receiveIdType },
+        data: {
+          receive_id: receiveId,
+          content,
+          msg_type: "interactive",
+        },
+      });
+    }
+
+    assertFeishuMessageApiSuccess(response, "Feishu streaming message send failed");
+    const sendResult = toFeishuSendResult(response, receiveId);
+
+    return {
+      cardId,
+      messageId: sendResult.messageId,
+      sendResult,
+    };
+  } catch (err) {
+    // If sending with card_id fails, fallback to sending card JSON directly
+    console.warn(`feishu: send with card_id failed, falling back to card JSON: ${String(err)}`);
+    
+    let fallbackContent = buildCardData({ content: initialContent, title, streaming: true });
+    if (mentions && mentions.length > 0) {
+      fallbackContent = buildCardData({
+        content: buildMentionedCardContent(mentions, initialContent),
+        title,
+        streaming: true,
+      });
+    }
+
+    const fallbackResponse = await client.im.message.create({
       params: { receive_id_type: receiveIdType },
       data: {
         receive_id: receiveId,
-        content,
+        content: JSON.stringify(fallbackContent),
         msg_type: "interactive",
       },
     });
+
+    assertFeishuMessageApiSuccess(fallbackResponse, "Feishu streaming fallback send failed");
+    const sendResult = toFeishuSendResult(fallbackResponse, receiveId);
+
+    return {
+      cardId,
+      messageId: sendResult.messageId,
+      sendResult,
+    };
   }
-
-  assertFeishuMessageApiSuccess(response, "Feishu streaming message send failed");
-  const sendResult = toFeishuSendResult(response, receiveId);
-
-  return {
-    cardId,
-    messageId: sendResult.messageId,
-    sendResult,
-  };
 }
 
 /**

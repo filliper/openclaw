@@ -5,7 +5,6 @@ import { resolveFeishuAccount } from "./accounts.js";
 import { sendMediaFeishu } from "./media.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { sendMarkdownCardFeishu, sendMessageFeishu, sendStreamingMessageFeishu } from "./send.js";
-import { StreamingManager, globalStreamingManager } from "./streaming.js";
 
 function normalizePossibleLocalImagePath(text: string | undefined): string | null {
   const raw = text?.trim();
@@ -72,10 +71,15 @@ async function sendOutboundText(params: {
   to: string;
   text: string;
   accountId?: string;
+  replyToId?: string;
+  threadId?: string;
 }) {
-  const { cfg, to, text, accountId } = params;
+  const { cfg, to, text, accountId, replyToId, threadId } = params;
   const account = resolveFeishuAccount({ cfg, accountId });
   const renderMode = account.config?.renderMode ?? "auto";
+
+  // Resolve replyToMessageId from replyToId and threadId
+  const replyToMessageId = replyToId || threadId;
 
   // Check streaming mode first
   if (shouldUseStreaming({ cfg, to, text, accountId })) {
@@ -83,6 +87,7 @@ async function sendOutboundText(params: {
       cfg,
       to,
       initialContent: text,
+      replyToMessageId,
       accountId,
     });
     
@@ -95,10 +100,10 @@ async function sendOutboundText(params: {
   }
 
   if (renderMode === "card" || (renderMode === "auto" && shouldUseCard(text))) {
-    return sendMarkdownCardFeishu({ cfg, to, text, accountId });
+    return sendMarkdownCardFeishu({ cfg, to, text, replyToMessageId, accountId });
   }
 
-  return sendMessageFeishu({ cfg, to, text, accountId });
+  return sendMessageFeishu({ cfg, to, text, replyToMessageId, accountId });
 }
 
 export const feishuOutbound: ChannelOutboundAdapter = {
@@ -106,7 +111,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   chunker: (text, limit) => getFeishuRuntime().channel.text.chunkMarkdownText(text, limit),
   chunkerMode: "markdown",
   textChunkLimit: 4000,
-  sendText: async ({ cfg, to, text, accountId }) => {
+  sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
     // Scheme A compatibility shim:
     // when upstream accidentally returns a local image path as plain text,
     // auto-upload and send as Feishu image message instead of leaking path text.
@@ -118,6 +123,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
           to,
           mediaUrl: localImagePath,
           accountId: accountId ?? undefined,
+          replyToId,
+          threadId,
         });
         return { channel: "feishu", ...result };
       } catch (err) {
@@ -131,10 +138,12 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       to,
       text,
       accountId: accountId ?? undefined,
+      replyToId,
+      threadId,
     });
     return { channel: "feishu", ...result };
   },
-  sendMedia: async ({ cfg, to, text, mediaUrl, accountId, mediaLocalRoots }) => {
+  sendMedia: async ({ cfg, to, text, mediaUrl, accountId, mediaLocalRoots, replyToId, threadId }) => {
     // Send text first if provided
     if (text?.trim()) {
       await sendOutboundText({
@@ -142,6 +151,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
         to,
         text,
         accountId: accountId ?? undefined,
+        replyToId,
+        threadId,
       });
     }
 
@@ -154,6 +165,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
           mediaUrl,
           accountId: accountId ?? undefined,
           mediaLocalRoots,
+          replyToId,
+          threadId,
         });
         return { channel: "feishu", ...result };
       } catch (err) {
@@ -166,6 +179,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
           to,
           text: fallbackText,
           accountId: accountId ?? undefined,
+          replyToId,
+          threadId,
         });
         return { channel: "feishu", ...result };
       }
@@ -177,6 +192,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       to,
       text: text ?? "",
       accountId: accountId ?? undefined,
+      replyToId,
+      threadId,
     });
     return { channel: "feishu", ...result };
   },

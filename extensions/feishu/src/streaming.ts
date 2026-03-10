@@ -155,10 +155,13 @@ export class StreamingManager {
     const state = this.states.get(sessionId);
     if (!state) return;
 
-    // 等待之前的更新完成（并发保护）
-    if (state.updateLock) {
+    // 使用循环重新检查锁，避免竞态条件
+    while (state.updateLock) {
       await state.updateLock;
     }
+
+    // 再次检查 state 是否仍然存在
+    if (!this.states.has(sessionId)) return;
 
     // 递增 sequence
     state.sequence += 1;
