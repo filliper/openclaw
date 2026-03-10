@@ -20,7 +20,10 @@ import {
 } from "../../acp/persistent-bindings.route.js";
 import { resolveHumanDelayConfig } from "../../agents/identity.js";
 import { resolveChunkMode, resolveTextChunkLimit } from "../../auto-reply/chunk.js";
-import { resolveCommandAuthorization, resolveCommandsAllowFromCheck } from "../../auto-reply/command-auth.js";
+import {
+  resolveCommandAuthorization,
+  resolveCommandsAllowFromCheck,
+} from "../../auto-reply/command-auth.js";
 import type {
   ChatCommandDefinition,
   CommandArgDefinition,
