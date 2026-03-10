@@ -267,9 +267,22 @@ function remapArchiveEntryPath(params: {
 }): string {
   const normalizedEntry = path.resolve(params.entryPath);
   if (normalizedEntry === params.manifestPath) {
-    return path.posix.join(params.archiveRoot, "manifest.json");
+    return assertSafeArchiveEntryPath(path.posix.join(params.archiveRoot, "manifest.json"));
   }
-  return buildBackupArchivePath(params.archiveRoot, normalizedEntry);
+  return assertSafeArchiveEntryPath(buildBackupArchivePath(params.archiveRoot, normalizedEntry));
+}
+
+function assertSafeArchiveEntryPath(entryPath: string): string {
+  const normalized = path.posix.normalize(entryPath);
+  const segments = normalized.split("/");
+  if (
+    !normalized ||
+    normalized.startsWith("/") ||
+    segments.some((segment) => segment === ".." || segment === ".")
+  ) {
+    throw new Error(`Unsafe archive path: ${entryPath}`);
+  }
+  return normalized;
 }
 
 function toAbortError(reason?: unknown): Error {
