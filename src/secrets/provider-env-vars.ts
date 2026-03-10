@@ -44,15 +44,42 @@ const EXTRA_PROVIDER_AUTH_ENV_VARS = [
   "VLLM_API_KEY",
 ] as const;
 
+// OPENCLAW_API_KEY authenticates the local OpenClaw bridge itself and must
+// remain available to child bridge/runtime processes.
+const KNOWN_PROVIDER_AUTH_ENV_VARS = [
+  ...new Set([
+    ...Object.values(PROVIDER_ENV_VARS).flatMap((keys) => keys),
+    ...EXTRA_PROVIDER_AUTH_ENV_VARS,
+  ]),
+];
+
 export function listKnownProviderAuthEnvVarNames(): string[] {
-  return [
-    ...new Set([
-      ...Object.values(PROVIDER_ENV_VARS).flatMap((keys) => keys),
-      ...EXTRA_PROVIDER_AUTH_ENV_VARS,
-    ]),
-  ];
+  return [...KNOWN_PROVIDER_AUTH_ENV_VARS];
 }
 
 export function listKnownSecretEnvVarNames(): string[] {
-  return [...new Set(Object.values(PROVIDER_ENV_VARS).flatMap((keys) => keys))];
+  return listKnownProviderAuthEnvVarNames();
+}
+
+export function omitEnvKeysCaseInsensitive(
+  baseEnv: NodeJS.ProcessEnv,
+  keys: Iterable<string>,
+): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  const denied = new Set<string>();
+  for (const key of keys) {
+    const normalizedKey = key.trim();
+    if (normalizedKey) {
+      denied.add(normalizedKey.toUpperCase());
+    }
+  }
+  if (denied.size === 0) {
+    return env;
+  }
+  for (const actualKey of Object.keys(env)) {
+    if (denied.has(actualKey.toUpperCase())) {
+      delete env[actualKey];
+    }
+  }
+  return env;
 }

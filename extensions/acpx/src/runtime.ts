@@ -520,6 +520,7 @@ export class AcpxRuntime implements AcpRuntime {
           command: this.config.command,
           args: ["--help"],
           cwd: this.config.cwd,
+          stripProviderAuthEnvVars: this.config.allowPluginLocalInstall,
         },
         this.spawnCommandOptions,
       );

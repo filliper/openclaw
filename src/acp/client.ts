@@ -19,7 +19,10 @@ import {
   materializeWindowsSpawnProgram,
   resolveWindowsSpawnProgram,
 } from "../plugin-sdk/windows-spawn.js";
-import { listKnownProviderAuthEnvVarNames } from "../secrets/provider-env-vars.js";
+import {
+  listKnownProviderAuthEnvVarNames,
+  omitEnvKeysCaseInsensitive,
+} from "../secrets/provider-env-vars.js";
 import { DANGEROUS_ACP_TOOLS } from "../security/dangerous-tools.js";
 
 const SAFE_AUTO_APPROVE_TOOL_IDS = new Set(["read", "search", "web_search", "memory_search"]);
@@ -355,28 +358,33 @@ export function resolveAcpClientSpawnEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
   options: AcpClientSpawnEnvOptions = {},
 ): NodeJS.ProcessEnv {
-  const env = { ...baseEnv };
-  for (const key of options.stripKeys ?? []) {
-    delete env[key];
-  }
+  const env = omitEnvKeysCaseInsensitive(baseEnv, options.stripKeys ?? []);
   env.OPENCLAW_SHELL = "acp-client";
   return env;
 }
 
-export function shouldStripProviderAuthEnvVarsForAcpServer(serverCommand?: string): boolean {
-  return !serverCommand;
+export function shouldStripProviderAuthEnvVarsForAcpServer(
+  params: {
+    serverCommand?: string;
+    defaultServerCommand?: string;
+  } = {},
+): boolean {
+  const serverCommand = params.serverCommand?.trim();
+  if (!serverCommand) {
+    return true;
+  }
+  const defaultServerCommand = params.defaultServerCommand?.trim();
+  return Boolean(defaultServerCommand) && serverCommand === defaultServerCommand;
 }
 
 export function buildAcpClientStripKeys(params: {
-  serverCommand?: string;
+  stripProviderAuthEnvVars?: boolean;
   activeSkillEnvKeys?: Iterable<string>;
 }): Set<string> {
   const stripKeys = new Set<string>(params.activeSkillEnvKeys ?? []);
-  if (shouldStripProviderAuthEnvVarsForAcpServer(params.serverCommand)) {
+  if (params.stripProviderAuthEnvVars) {
     for (const key of listKnownProviderAuthEnvVarNames()) {
-      if (key !== "OPENCLAW_API_KEY") {
-        stripKeys.add(key);
-      }
+      stripKeys.add(key);
     }
   }
   return stripKeys;
@@ -478,11 +486,16 @@ export async function createAcpClient(opts: AcpClientOptions = {}): Promise<AcpC
   const serverArgs = buildServerArgs(opts);
 
   const entryPath = resolveSelfEntryPath();
-  const serverCommand = opts.serverCommand ?? (entryPath ? process.execPath : "openclaw");
+  const defaultServerCommand = entryPath ? process.execPath : "openclaw";
+  const serverCommand = opts.serverCommand ?? defaultServerCommand;
   const effectiveArgs = opts.serverCommand || !entryPath ? serverArgs : [entryPath, ...serverArgs];
   const { getActiveSkillEnvKeys } = await import("../agents/skills/env-overrides.runtime.js");
+  const stripProviderAuthEnvVars = shouldStripProviderAuthEnvVarsForAcpServer({
+    serverCommand,
+    defaultServerCommand,
+  });
   const stripKeys = buildAcpClientStripKeys({
-    serverCommand: opts.serverCommand,
+    stripProviderAuthEnvVars,
     activeSkillEnvKeys: getActiveSkillEnvKeys(),
   });
   const spawnEnv = resolveAcpClientSpawnEnv(process.env, { stripKeys });

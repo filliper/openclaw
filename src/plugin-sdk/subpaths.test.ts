@@ -101,6 +101,7 @@ describe("plugin-sdk subpath exports", () => {
   it("exports acpx helpers", async () => {
     const acpxSdk = await import("openclaw/plugin-sdk/acpx");
     expect(typeof acpxSdk.listKnownProviderAuthEnvVarNames).toBe("function");
+    expect(typeof acpxSdk.omitEnvKeysCaseInsensitive).toBe("function");
   });
 
   it("resolves bundled extension subpaths", async () => {

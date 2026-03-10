@@ -9,6 +9,7 @@ import {
   applyWindowsSpawnProgramPolicy,
   listKnownProviderAuthEnvVarNames,
   materializeWindowsSpawnProgram,
+  omitEnvKeysCaseInsensitive,
   resolveWindowsSpawnProgramCandidate,
 } from "openclaw/plugin-sdk/acpx";
 
@@ -138,17 +139,11 @@ export function spawnWithResolvedCommand(
     options,
   );
 
-  const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    OPENCLAW_SHELL: "acp",
-  };
-  if (params.stripProviderAuthEnvVars !== false) {
-    for (const key of listKnownProviderAuthEnvVarNames()) {
-      if (key !== "OPENCLAW_API_KEY") {
-        delete childEnv[key];
-      }
-    }
-  }
+  const childEnv = omitEnvKeysCaseInsensitive(
+    process.env,
+    params.stripProviderAuthEnvVars ? listKnownProviderAuthEnvVarNames() : [],
+  );
+  childEnv.OPENCLAW_SHELL = "acp";
 
   return spawn(resolved.command, resolved.args, {
     cwd: params.cwd,

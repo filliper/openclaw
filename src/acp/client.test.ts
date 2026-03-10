@@ -134,6 +134,22 @@ describe("resolveAcpClientSpawnEnv", () => {
     expect(env.OPENCLAW_SHELL).toBe("acp-client");
   });
 
+  it("strips provider auth env vars case-insensitively", () => {
+    const env = resolveAcpClientSpawnEnv(
+      {
+        OpenAI_Api_Key: "openai-secret", // pragma: allowlist secret
+        Github_Token: "gh-secret", // pragma: allowlist secret
+        OPENCLAW_API_KEY: "keep-me",
+      },
+      { stripKeys: new Set(["OPENAI_API_KEY", "GITHUB_TOKEN"]) },
+    );
+
+    expect(env.OpenAI_Api_Key).toBeUndefined();
+    expect(env.Github_Token).toBeUndefined();
+    expect(env.OPENCLAW_API_KEY).toBe("keep-me");
+    expect(env.OPENCLAW_SHELL).toBe("acp-client");
+  });
+
   it("preserves provider auth env vars for explicit custom ACP servers", () => {
     const env = resolveAcpClientSpawnEnv({
       OPENAI_API_KEY: "openai-secret", // pragma: allowlist secret
@@ -153,17 +169,28 @@ describe("resolveAcpClientSpawnEnv", () => {
 describe("shouldStripProviderAuthEnvVarsForAcpServer", () => {
   it("strips provider auth env vars for the default bridge", () => {
     expect(shouldStripProviderAuthEnvVarsForAcpServer()).toBe(true);
+    expect(
+      shouldStripProviderAuthEnvVarsForAcpServer({
+        serverCommand: "openclaw",
+        defaultServerCommand: "openclaw",
+      }),
+    ).toBe(true);
   });
 
   it("preserves provider auth env vars for explicit custom ACP servers", () => {
-    expect(shouldStripProviderAuthEnvVarsForAcpServer("custom-acp-server")).toBe(false);
+    expect(
+      shouldStripProviderAuthEnvVarsForAcpServer({
+        serverCommand: "custom-acp-server",
+        defaultServerCommand: "openclaw",
+      }),
+    ).toBe(false);
   });
 });
 
 describe("buildAcpClientStripKeys", () => {
   it("always includes active skill env keys", () => {
     const stripKeys = buildAcpClientStripKeys({
-      serverCommand: "custom-acp-server",
+      stripProviderAuthEnvVars: false,
       activeSkillEnvKeys: ["SKILL_SECRET", "OPENAI_API_KEY"],
     });
 
@@ -174,6 +201,7 @@ describe("buildAcpClientStripKeys", () => {
 
   it("adds provider auth env vars for the default bridge", () => {
     const stripKeys = buildAcpClientStripKeys({
+      stripProviderAuthEnvVars: true,
       activeSkillEnvKeys: ["SKILL_SECRET"],
     });
 
