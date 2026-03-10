@@ -143,7 +143,7 @@ describe("promptAndConfigureVllm", () => {
           vllm: {
             baseUrl: "http://gpu-box:8000/v1",
             api: "openai-completions",
-            apiKey: "VLLM_API_KEY",
+            apiKey: "VLLM_API_KEY", // pragma: allowlist secret
             models: [makeModel("meta-llama/Meta-Llama-3-8B-Instruct")],
           },
         },
@@ -160,7 +160,7 @@ describe("promptAndConfigureVllm", () => {
     if (!result) {
       throw new Error("Expected a configured vLLM result");
     }
-    expect(result.config.models?.providers?.vllm?.apiKey).toBe("VLLM_API_KEY");
+    expect(result.config.models?.providers?.vllm?.apiKey).toBe("VLLM_API_KEY"); // pragma: allowlist secret
   });
 
   it("allows blank API keys when an existing endpoint is config-backed", async () => {
@@ -184,7 +184,7 @@ describe("promptAndConfigureVllm", () => {
           vllm: {
             baseUrl: "http://gpu-box:8000/v1",
             api: "openai-completions",
-            apiKey: "VLLM_API_KEY",
+            apiKey: "VLLM_API_KEY", // pragma: allowlist secret
             models: [makeModel("meta-llama/Meta-Llama-3-8B-Instruct")],
           },
         },
@@ -203,7 +203,7 @@ describe("promptAndConfigureVllm", () => {
     }
     expect(buildVllmProvider).toHaveBeenCalledWith({
       baseUrl: "http://gpu-box:8000/v1",
-      apiKey: "VLLM_API_KEY",
+      apiKey: "VLLM_API_KEY", // pragma: allowlist secret
     });
     expect(upsertAuthProfileWithLock).not.toHaveBeenCalled();
   });
