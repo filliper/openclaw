@@ -313,4 +313,69 @@ describe("runRescueWatchdogJob", () => {
     expect(result.error).toContain("skipped doctor fallback");
     expect(runCommandWithTimeout).not.toHaveBeenCalled();
   });
+
+  it("bounds service restart by timeout budget", async () => {
+    probeGateway.mockResolvedValue({
+      ok: false,
+      close: { code: 1006, reason: "down" },
+      error: "down",
+    });
+    restartService.mockImplementation(() => new Promise<void>(() => {}));
+
+    const runPromise = runRescueWatchdogJob({
+      job: {
+        id: "job-restart-timeout",
+        name: "rescue",
+        payload: {
+          kind: "rescueWatchdog",
+          monitoredProfile: "work",
+          timeoutSeconds: 45,
+        },
+      } as never,
+      monitoredProfile: "work",
+    });
+
+    await vi.advanceTimersByTimeAsync(46_000);
+    const result = await runPromise;
+
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("restart failed: service restart timed out");
+    expect(runCommandWithTimeout).not.toHaveBeenCalled();
+  });
+
+  it("returns quickly when aborted during service restart", async () => {
+    probeGateway.mockResolvedValue({
+      ok: false,
+      close: { code: 1006, reason: "down" },
+      error: "down",
+    });
+    restartService.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 60_000);
+        }),
+    );
+    const abort = new AbortController();
+
+    const runPromise = runRescueWatchdogJob({
+      job: {
+        id: "job-restart-abort",
+        name: "rescue",
+        payload: {
+          kind: "rescueWatchdog",
+          monitoredProfile: "work",
+          timeoutSeconds: 120,
+        },
+      } as never,
+      monitoredProfile: "work",
+      abortSignal: abort.signal,
+    });
+    abort.abort();
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await runPromise;
+
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("service restart aborted");
+    expect(runCommandWithTimeout).not.toHaveBeenCalled();
+  });
 });

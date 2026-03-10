@@ -19,6 +19,8 @@ const PROBE_POLL_MS = 500;
 const RECOVERY_WAIT_DEADLINE_MS = 30_000;
 const DOCTOR_REPAIR_TIMEOUT_MS = 60_000;
 const MIN_DOCTOR_TIMEOUT_MS = 1_000;
+const RESTART_TIMEOUT_MS = 15_000;
+const MIN_RESTART_TIMEOUT_MS = 500;
 
 function looksLikeAuthClose(code: number | undefined, reason: string | undefined): boolean {
   if (code !== 1008) {
@@ -175,6 +177,64 @@ function resolveRemainingJobBudgetMs(params: {
   );
 }
 
+type RunBoundedResult = { ok: true } | { ok: false; error: string; aborted: boolean };
+
+async function runBoundedStep(params: {
+  run: () => Promise<void>;
+  timeoutMs: number;
+  abortSignal?: AbortSignal;
+  label: string;
+}): Promise<RunBoundedResult> {
+  if (params.abortSignal?.aborted) {
+    return { ok: false, error: `${params.label} aborted`, aborted: true };
+  }
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    const runPromise = params.run().then(
+      () => ({ kind: "done" as const }),
+      (error: unknown) => ({ kind: "error" as const, error }),
+    );
+    const timeoutPromise = new Promise<{ kind: "timeout" }>((resolve) => {
+      timer = setTimeout(() => resolve({ kind: "timeout" }), params.timeoutMs);
+    });
+    const abortPromise = new Promise<{ kind: "aborted" }>((resolve) => {
+      if (!params.abortSignal) {
+        return;
+      }
+      onAbort = () => resolve({ kind: "aborted" });
+      params.abortSignal.addEventListener("abort", onAbort, { once: true });
+    });
+
+    const outcome = await Promise.race([runPromise, timeoutPromise, abortPromise]);
+    if (outcome.kind === "done") {
+      return { ok: true };
+    }
+    if (outcome.kind === "error") {
+      return {
+        ok: false,
+        error: outcome.error instanceof Error ? outcome.error.message : `${params.label} failed`,
+        aborted: false,
+      };
+    }
+    if (outcome.kind === "aborted") {
+      return { ok: false, error: `${params.label} aborted`, aborted: true };
+    }
+    return {
+      ok: false,
+      error: `${params.label} timed out after ${params.timeoutMs}ms`,
+      aborted: false,
+    };
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    if (params.abortSignal && onAbort) {
+      params.abortSignal.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
 export async function runRescueWatchdogJob(params: {
   job: CronJob;
   monitoredProfile: string;
@@ -231,11 +291,38 @@ export async function runRescueWatchdogJob(params: {
   }
 
   let restartError: string | undefined;
-  try {
-    await service.restart({ env, stdout: process.stdout });
-    actions.push("restarted managed gateway service");
-  } catch (error) {
-    restartError = error instanceof Error ? error.message : String(error);
+  const remainingBeforeRestartMs = resolveRemainingJobBudgetMs({
+    startedAtMs,
+    payload: params.job.payload,
+  });
+  if (
+    typeof remainingBeforeRestartMs === "number" &&
+    remainingBeforeRestartMs < MIN_RESTART_TIMEOUT_MS
+  ) {
+    restartError = `skipped restart because only ${remainingBeforeRestartMs}ms remained in the cron job budget`;
+  } else {
+    const restartTimeoutMs =
+      typeof remainingBeforeRestartMs === "number"
+        ? Math.min(RESTART_TIMEOUT_MS, remainingBeforeRestartMs)
+        : RESTART_TIMEOUT_MS;
+    const restartResult = await runBoundedStep({
+      run: () => service.restart({ env, stdout: process.stdout }),
+      timeoutMs: restartTimeoutMs,
+      abortSignal: params.abortSignal,
+      label: "service restart",
+    });
+    if (restartResult.ok) {
+      actions.push("restarted managed gateway service");
+    } else {
+      restartError = restartResult.error;
+      if (restartResult.aborted) {
+        return {
+          status: "error",
+          error: restartResult.error,
+          summary: actions.length > 0 ? buildSummary(monitoredProfile, actions) : undefined,
+        };
+      }
+    }
   }
 
   const restartProbe = await waitForProfileGateway({
