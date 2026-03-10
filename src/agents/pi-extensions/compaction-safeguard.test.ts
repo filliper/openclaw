@@ -1589,6 +1589,15 @@ describe("compaction-safeguard double-compaction guard", () => {
       ),
     ).toBe(true);
   });
+
+  it("does not treat assistant-only tool calls as meaningful conversation", () => {
+    expect(
+      __testing.hasMeaningfulConversationContent({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+      } as AgentMessage),
+    ).toBe(false);
+  });
 });
 
 async function expectWorkspaceSummaryEmptyForAgentsAlias(
