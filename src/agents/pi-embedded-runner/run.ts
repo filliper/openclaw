@@ -1013,6 +1013,7 @@ export async function runEmbeddedPiAgent(
               overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS
             ) {
               overflowCompactionAttempts++;
+              sseParseRetries = 0;
               log.warn(
                 `context overflow persisted after in-attempt compaction (attempt ${overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); retrying prompt without additional compaction for ${provider}/${modelId}`,
               );
@@ -1109,6 +1110,7 @@ export async function runEmbeddedPiAgent(
                   sessionKey: params.sessionKey,
                 });
                 if (truncResult.truncated) {
+                  sseParseRetries = 0;
                   log.info(
                     `[context-overflow-recovery] Truncated ${truncResult.truncatedCount} tool result(s); retrying prompt`,
                   );
@@ -1170,6 +1172,7 @@ export async function runEmbeddedPiAgent(
             const errorText = describeUnknownError(promptError);
             if (await maybeRefreshCopilotForAuthError(errorText, copilotAuthRetry)) {
               authRetryPending = true;
+              sseParseRetries = 0;
               continue;
             }
             // Handle role ordering errors with a user-friendly message
@@ -1353,6 +1356,7 @@ export async function runEmbeddedPiAgent(
             ))
           ) {
             authRetryPending = true;
+            sseParseRetries = 0;
             continue;
           }
           if (imageDimensionError && lastProfileId) {
