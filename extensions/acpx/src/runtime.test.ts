@@ -19,6 +19,7 @@ beforeAll(async () => {
     {
       command: "/definitely/missing/acpx",
       allowPluginLocalInstall: false,
+      stripProviderAuthEnvVars: false,
       installCommand: "n/a",
       cwd: process.cwd(),
       permissionMode: "approve-reads",

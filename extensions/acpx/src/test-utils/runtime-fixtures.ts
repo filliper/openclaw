@@ -328,6 +328,7 @@ export async function createMockRuntimeFixture(params?: {
   const config: ResolvedAcpxPluginConfig = {
     command: scriptPath,
     allowPluginLocalInstall: false,
+    stripProviderAuthEnvVars: false,
     installCommand: "n/a",
     cwd: dir,
     permissionMode: params?.permissionMode ?? "approve-all",

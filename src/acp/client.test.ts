@@ -172,7 +172,9 @@ describe("shouldStripProviderAuthEnvVarsForAcpServer", () => {
     expect(
       shouldStripProviderAuthEnvVarsForAcpServer({
         serverCommand: "openclaw",
+        serverArgs: ["acp"],
         defaultServerCommand: "openclaw",
+        defaultServerArgs: ["acp"],
       }),
     ).toBe(true);
   });
@@ -181,7 +183,20 @@ describe("shouldStripProviderAuthEnvVarsForAcpServer", () => {
     expect(
       shouldStripProviderAuthEnvVarsForAcpServer({
         serverCommand: "custom-acp-server",
+        serverArgs: ["serve"],
         defaultServerCommand: "openclaw",
+        defaultServerArgs: ["acp"],
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves provider auth env vars when an explicit override uses the default executable with different args", () => {
+    expect(
+      shouldStripProviderAuthEnvVarsForAcpServer({
+        serverCommand: process.execPath,
+        serverArgs: ["custom-entry.js"],
+        defaultServerCommand: process.execPath,
+        defaultServerArgs: ["dist/entry.js", "acp"],
       }),
     ).toBe(false);
   });
