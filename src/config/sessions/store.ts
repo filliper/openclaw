@@ -122,6 +122,21 @@ export function resolveSessionStoreEntry(params: {
 } {
   const trimmedKey = params.sessionKey.trim();
   const normalizedKey = normalizeStoreSessionKey(trimmedKey);
+
+  const directHit = params.store[normalizedKey];
+  if (directHit) {
+    const legacyKeys: string[] = [];
+    for (const storeKey of Object.keys(params.store)) {
+      if (storeKey === normalizedKey) {
+        continue;
+      }
+      if (storeKey.toLowerCase() === normalizedKey) {
+        legacyKeys.push(storeKey);
+      }
+    }
+    return { normalizedKey, existing: directHit, legacyKeys };
+  }
+
   const legacyKeySet = new Set<string>();
   if (
     trimmedKey !== normalizedKey &&
@@ -129,17 +144,18 @@ export function resolveSessionStoreEntry(params: {
   ) {
     legacyKeySet.add(trimmedKey);
   }
-  let existing =
-    params.store[normalizedKey] ?? (legacyKeySet.size > 0 ? params.store[trimmedKey] : undefined);
+  let existing: SessionEntry | undefined =
+    legacyKeySet.size > 0 ? params.store[trimmedKey] : undefined;
   let existingUpdatedAt = existing?.updatedAt ?? 0;
-  for (const [candidateKey, candidateEntry] of Object.entries(params.store)) {
-    if (candidateKey === normalizedKey) {
+  for (const storeKey of Object.keys(params.store)) {
+    if (storeKey === normalizedKey) {
       continue;
     }
-    if (candidateKey.toLowerCase() !== normalizedKey) {
+    if (storeKey.toLowerCase() !== normalizedKey) {
       continue;
     }
-    legacyKeySet.add(candidateKey);
+    legacyKeySet.add(storeKey);
+    const candidateEntry = params.store[storeKey];
     const candidateUpdatedAt = candidateEntry?.updatedAt ?? 0;
     if (!existing || candidateUpdatedAt > existingUpdatedAt) {
       existing = candidateEntry;
@@ -153,8 +169,13 @@ export function resolveSessionStoreEntry(params: {
   };
 }
 
-function normalizeSessionStore(store: Record<string, SessionEntry>): void {
-  for (const [key, entry] of Object.entries(store)) {
+function normalizeSessionStore(
+  store: Record<string, SessionEntry>,
+  keys?: Iterable<string>,
+): void {
+  const target = keys ?? Object.keys(store);
+  for (const key of target) {
+    const entry = store[key];
     if (!entry) {
       continue;
     }
@@ -173,6 +194,8 @@ export function clearSessionStoreCacheForTest(): void {
     }
   }
   LOCK_QUEUES.clear();
+  LOCKED_STORE_CACHE.clear();
+  LAST_MAINTENANCE.clear();
 }
 
 /** Expose lock queue size for tests. */
@@ -266,7 +289,7 @@ export function loadSessionStore(
     });
   }
 
-  return structuredClone(store);
+  return { ...store };
 }
 
 export function readSessionUpdatedAt(params: {
@@ -341,10 +364,15 @@ async function saveSessionStoreUnlocked(
   storePath: string,
   store: Record<string, SessionEntry>,
   opts?: SaveSessionStoreOptions,
+  dirtyKeys?: Iterable<string>,
 ): Promise<void> {
-  normalizeSessionStore(store);
+  normalizeSessionStore(store, dirtyKeys);
 
-  if (!opts?.skipMaintenance) {
+  const now = Date.now();
+  const lastMaintenance = LAST_MAINTENANCE.get(storePath) ?? 0;
+  const maintenanceThrottled = now - lastMaintenance < MAINTENANCE_THROTTLE_MS;
+
+  if (!opts?.skipMaintenance && !maintenanceThrottled) {
     // Resolve maintenance config once (avoids repeated loadConfig() calls).
     const maintenance = { ...resolveMaintenanceConfig(), ...opts?.maintenanceOverride };
     const shouldWarnOnly = maintenance.mode === "warn";
@@ -452,6 +480,7 @@ async function saveSessionStoreUnlocked(
         diskBudget,
       });
     }
+    LAST_MAINTENANCE.set(storePath, now);
   }
 
   await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
@@ -515,6 +544,7 @@ export async function saveSessionStore(
 ): Promise<void> {
   await withSessionStoreLock(storePath, async () => {
     await saveSessionStoreUnlocked(storePath, store, opts);
+    LOCKED_STORE_CACHE.delete(storePath);
   });
 }
 
@@ -524,10 +554,17 @@ export async function updateSessionStore<T>(
   opts?: SaveSessionStoreOptions,
 ): Promise<T> {
   return await withSessionStoreLock(storePath, async () => {
-    // Always re-read inside the lock to avoid clobbering concurrent writers.
-    const store = loadSessionStore(storePath, { skipCache: true });
+    const locked = LOCKED_STORE_CACHE.get(storePath);
+    const store = locked
+      ? structuredClone(locked.store)
+      : loadSessionStore(storePath, { skipCache: true });
+    if (locked) {
+      locked.lastAccessAt = Date.now();
+    }
     const result = await mutator(store);
     await saveSessionStoreUnlocked(storePath, store, opts);
+    LOCKED_STORE_CACHE.set(storePath, { store: structuredClone(store), lastAccessAt: Date.now() });
+    evictLockedStoreCacheIfNeeded();
     return result;
   });
 }
@@ -552,6 +589,35 @@ type SessionStoreLockQueue = {
 };
 
 const LOCK_QUEUES = new Map<string, SessionStoreLockQueue>();
+
+type LockedStoreCache = {
+  store: Record<string, SessionEntry>;
+  lastAccessAt: number;
+};
+
+const LOCKED_STORE_CACHE = new Map<string, LockedStoreCache>();
+const LOCKED_STORE_CACHE_TTL_MS = 60 * 60 * 1000;
+const LOCKED_STORE_CACHE_MAX = 200;
+
+function evictLockedStoreCacheIfNeeded(): void {
+  const now = Date.now();
+  for (const [key, entry] of LOCKED_STORE_CACHE) {
+    if (now - entry.lastAccessAt > LOCKED_STORE_CACHE_TTL_MS) {
+      LOCKED_STORE_CACHE.delete(key);
+    }
+  }
+  if (LOCKED_STORE_CACHE.size > LOCKED_STORE_CACHE_MAX) {
+    const oldest = [...LOCKED_STORE_CACHE.entries()].sort(
+      (a, b) => a[1].lastAccessAt - b[1].lastAccessAt,
+    );
+    for (const [key] of oldest.slice(0, LOCKED_STORE_CACHE.size - LOCKED_STORE_CACHE_MAX)) {
+      LOCKED_STORE_CACHE.delete(key);
+    }
+  }
+}
+
+const LAST_MAINTENANCE = new Map<string, number>();
+const MAINTENANCE_THROTTLE_MS = 5 * 60 * 1000;
 
 function getErrorCode(error: unknown): string | null {
   if (!error || typeof error !== "object" || !("code" in error)) {
@@ -618,9 +684,12 @@ async function persistResolvedSessionEntry(params: {
   for (const legacyKey of params.resolved.legacyKeys) {
     delete params.store[legacyKey];
   }
-  await saveSessionStoreUnlocked(params.storePath, params.store, {
-    activeSessionKey: params.resolved.normalizedKey,
-  });
+  await saveSessionStoreUnlocked(
+    params.storePath,
+    params.store,
+    { activeSessionKey: params.resolved.normalizedKey },
+    [params.resolved.normalizedKey],
+  );
   return params.next;
 }
 
@@ -684,6 +753,7 @@ async function drainSessionStoreLockQueue(storePath: string): Promise<void> {
     queue.running = false;
     if (queue.pending.length === 0) {
       LOCK_QUEUES.delete(storePath);
+      LOCKED_STORE_CACHE.delete(storePath);
     } else {
       queueMicrotask(() => {
         void drainSessionStoreLockQueue(storePath);
@@ -744,12 +814,14 @@ export async function updateSessionStoreEntry(params: {
       return existing;
     }
     const next = mergeSessionEntry(existing, patch);
-    return await persistResolvedSessionEntry({
+    const result = await persistResolvedSessionEntry({
       storePath,
       store,
       resolved,
       next,
     });
+    LOCKED_STORE_CACHE.delete(storePath);
+    return result;
   });
 }
 
