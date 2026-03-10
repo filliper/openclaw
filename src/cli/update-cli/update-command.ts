@@ -12,6 +12,7 @@ import {
 } from "../../config/config.js";
 import { formatConfigIssueLines } from "../../config/issue-format.js";
 import { resolveGatewayService } from "../../daemon/service.js";
+import { resolveOpenClawPackageRoot } from "../../infra/openclaw-root.js";
 import {
   channelToNpmTag,
   DEFAULT_GIT_CHANNEL,
@@ -183,7 +184,15 @@ async function refreshGatewayServiceEnv(params: {
     args.push("--json");
   }
 
-  for (const candidate of resolveGatewayInstallEntrypointCandidates(params.result.root)) {
+  // After a pnpm global update the package root may have moved to a new
+  // content-addressable store directory (the hash suffix changes when
+  // dependencies change).  Re-resolve the root from the current process's
+  // own argv[1] so we pick up the *updated* entrypoint, not the stale
+  // pre-update path that may still exist on disk.
+  const currentRoot =
+    (await resolveOpenClawPackageRoot({ argv1: process.argv[1] })) ?? params.result.root;
+
+  for (const candidate of resolveGatewayInstallEntrypointCandidates(currentRoot)) {
     if (!(await pathExists(candidate))) {
       continue;
     }
