@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildRescueProfileEnv, canEnableRescueWatchdog } from "./watchdog-shared.js";
 
+function toPosixPath(value: string | undefined): string {
+  return (value ?? "").replaceAll("\\", "/");
+}
+
 describe("buildRescueProfileEnv", () => {
   it("recomputes state/config paths for the requested profile", () => {
     const env = buildRescueProfileEnv("work", {
@@ -11,8 +15,10 @@ describe("buildRescueProfileEnv", () => {
     });
 
     expect(env.OPENCLAW_PROFILE).toBe("work");
-    expect(env.OPENCLAW_STATE_DIR).toBe("/srv/openclaw-home/.openclaw-work");
-    expect(env.OPENCLAW_CONFIG_PATH).toBe("/srv/openclaw-home/.openclaw-work/openclaw.json");
+    expect(toPosixPath(env.OPENCLAW_STATE_DIR)).toMatch(/\/srv\/openclaw-home\/\.openclaw-work$/);
+    expect(toPosixPath(env.OPENCLAW_CONFIG_PATH)).toMatch(
+      /\/srv\/openclaw-home\/\.openclaw-work\/openclaw\.json$/,
+    );
   });
 
   it("preserves daemon service identity overrides", () => {
