@@ -536,6 +536,112 @@ describe("loadChatHistory", () => {
   });
 });
 
+describe("handleChatEvent — lead-fragment (NO prefix) filtering", () => {
+  it('ignores "NO" lead-fragment delta — does not set chatStream', () => {
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: null,
+    });
+    handleChatEvent(state, {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "NO" }] },
+    });
+    expect(state.chatStream).toBeNull();
+  });
+
+  it('ignores "NO_" lead-fragment delta', () => {
+    const state = createState({ sessionKey: "main", chatRunId: "run-1" });
+    handleChatEvent(state, {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "NO_" }] },
+    });
+    expect(state.chatStream).toBeNull();
+  });
+
+  it('ignores "NO_RE" lead-fragment delta', () => {
+    const state = createState({ sessionKey: "main", chatRunId: "run-1" });
+    handleChatEvent(state, {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "NO_RE" }] },
+    });
+    expect(state.chatStream).toBeNull();
+  });
+
+  it('does not render "NO" chatStream as visible message when final carries NO_REPLY', () => {
+    // Exact regression scenario: a "NO" fragment leaked into chatStream,
+    // then the final event carries the full NO_REPLY token.
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: "NO",
+      chatStreamStartedAt: 100,
+    });
+    handleChatEvent(state, {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "final",
+      message: { role: "assistant", content: [{ type: "text", text: "NO_REPLY" }] },
+    });
+    expect(state.chatMessages).toEqual([]);
+    expect(state.chatStream).toBeNull();
+  });
+
+  it('does not render "NO_" chatStream as visible message on final with no message', () => {
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: "NO_",
+      chatStreamStartedAt: 100,
+    });
+    handleChatEvent(state, {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "final",
+    });
+    expect(state.chatMessages).toEqual([]);
+    expect(state.chatStream).toBeNull();
+  });
+
+  it('does not render "NO" chatStream as visible message on aborted', () => {
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: "NO",
+      chatStreamStartedAt: 100,
+    });
+    handleChatEvent(state, {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "aborted",
+      message: "not-an-assistant-message",
+    } as unknown as ChatEventPayload);
+    expect(state.chatMessages).toEqual([]);
+    expect(state.chatStream).toBeNull();
+  });
+
+  it('does NOT suppress natural-language "No,..." delta replies', () => {
+    // isSilentReplyPrefixText uses a case-sensitivity guard — mixed case is never suppressed.
+    const state = createState({ sessionKey: "main", chatRunId: "run-1" });
+    handleChatEvent(state, {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "delta",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "No, I cannot do that." }],
+      },
+    });
+    expect(state.chatStream).toBe("No, I cannot do that.");
+  });
+});
+
 describe("loadChatHistory", () => {
   it("filters assistant NO_REPLY messages and keeps user NO_REPLY messages", async () => {
     const request = vi.fn().mockResolvedValue({

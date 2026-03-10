@@ -13,6 +13,10 @@ import type { SessionsListResult } from "../types.ts";
 import type { ChatItem, MessageGroup } from "../types/chat-types.ts";
 import type { ChatAttachment, ChatQueueItem } from "../ui-types.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
+import {
+  isSilentReplyPrefixText,
+  isSilentReplyText,
+} from "../../../../src/auto-reply/tokens.js";
 import "../components/resizable-divider.ts";
 
 export type CompactionIndicatorStatus = {
@@ -579,7 +583,13 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
   const segments = props.streamSegments ?? [];
   const maxLen = Math.max(segments.length, tools.length);
   for (let i = 0; i < maxLen; i++) {
-    if (i < segments.length && segments[i].text.trim().length > 0) {
+    const segText = segments[i]?.text.trim() ?? "";
+    if (
+      i < segments.length &&
+      segText.length > 0 &&
+      !isSilentReplyText(segText) &&
+      !isSilentReplyPrefixText(segText)
+    ) {
       items.push({
         kind: "stream" as const,
         key: `stream-seg:${props.sessionKey}:${i}`,
@@ -598,7 +608,12 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
 
   if (props.stream !== null) {
     const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
-    if (props.stream.trim().length > 0) {
+    const streamText = props.stream.trim();
+    if (
+      streamText.length > 0 &&
+      !isSilentReplyText(streamText) &&
+      !isSilentReplyPrefixText(streamText)
+    ) {
       items.push({
         kind: "stream",
         key,
