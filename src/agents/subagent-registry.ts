@@ -560,6 +560,7 @@ async function sendExternalCompletionNotification(entry: SubagentRunRecord): Pro
         channel,
         to: target,
         message,
+        accountId: entry.requesterOrigin?.accountId,
         idempotencyKey: `subagent-complete-${entry.runId}`,
       },
       timeoutMs: 15_000,
