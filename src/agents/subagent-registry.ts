@@ -528,6 +528,50 @@ async function completeSubagentRun(params: {
   startSubagentAnnounceCleanupFlow(params.runId, entry);
 }
 
+/**
+ * Send an external completion notification to a configured channel when
+ * `notifyChannel` and `notifyTarget` are set on the run record.
+ * This is fire-and-forget; failures are logged but do not block cleanup.
+ */
+async function sendExternalCompletionNotification(entry: SubagentRunRecord): Promise<void> {
+  const channel = entry.notifyChannel?.trim();
+  const target = entry.notifyTarget?.trim();
+  if (!channel || !target) {
+    return;
+  }
+
+  const taskLabel = entry.label || entry.task || "task";
+  const outcome = entry.outcome;
+  const statusEmoji =
+    outcome?.status === "error" ? "❌" : outcome?.status === "timeout" ? "⏱️" : "✅";
+  const statusText =
+    outcome?.status === "error"
+      ? "failed"
+      : outcome?.status === "timeout"
+        ? "timed out"
+        : "completed";
+
+  const message = `${statusEmoji} Subagent "${taskLabel}" ${statusText}`;
+
+  try {
+    await callGateway({
+      method: "send",
+      params: {
+        channel,
+        to: target,
+        message,
+        accountId: entry.requesterOrigin?.accountId,
+        idempotencyKey: `subagent-complete-${entry.runId}`,
+      },
+      timeoutMs: 15_000,
+    });
+  } catch (err) {
+    defaultRuntime.log(
+      `[warn] External completion notification failed for run ${entry.runId} → ${channel}:${target}: ${String(err)}`,
+    );
+  }
+}
+
 function startSubagentAnnounceCleanupFlow(runId: string, entry: SubagentRunRecord): boolean {
   if (!beginSubagentCleanup(runId)) {
     return false;
@@ -554,6 +598,11 @@ function startSubagentAnnounceCleanupFlow(runId: string, entry: SubagentRunRecor
     wakeOnDescendantSettle: entry.wakeOnDescendantSettle === true,
   })
     .then((didAnnounce) => {
+      // Send external completion notification regardless of whether the
+      // internal announce succeeded.  When the requester session is inactive
+      // (didAnnounce=false), the external notification is the only signal that
+      // the run finished — without it, deferred/inactive cases are silently lost.
+      void sendExternalCompletionNotification(entry);
       void finalizeSubagentCleanup(runId, entry.cleanup, didAnnounce);
     })
     .catch((error) => {
@@ -1160,6 +1209,8 @@ export function registerSubagentRun(params: {
   attachmentsDir?: string;
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;
+  notifyChannel?: string;
+  notifyTarget?: string;
 }) {
   const now = Date.now();
   const cfg = loadConfig();
@@ -1192,6 +1243,8 @@ export function registerSubagentRun(params: {
     attachmentsDir: params.attachmentsDir,
     attachmentsRootDir: params.attachmentsRootDir,
     retainAttachmentsOnKeep: params.retainAttachmentsOnKeep,
+    notifyChannel: params.notifyChannel,
+    notifyTarget: params.notifyTarget,
   });
   ensureListener();
   persistSubagentRuns();
