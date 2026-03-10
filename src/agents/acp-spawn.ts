@@ -40,7 +40,7 @@ import {
   resolveAcpSpawnStreamLogPath,
   startAcpSpawnParentStreamRelay,
 } from "./acp-spawn-parent-stream.js";
-import { resolveAgentConfig } from "./agent-scope.js";
+import { resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { PROVIDER_ENV_API_KEY_CANDIDATES } from "./model-auth-env-vars.js";
 import { getCustomProviderApiKey } from "./model-auth.js";
 import { normalizeProviderId } from "./model-selection.js";
@@ -318,12 +318,10 @@ function resolveAcpSpawnAgentEnv(params: {
   cfg: OpenClawConfig;
   agentId: string;
 }): Record<string, string> | undefined {
-  const agentConfig = resolveAgentConfig(params.cfg, params.agentId);
-  if (!agentConfig?.model) {
+  const modelRef = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId);
+  if (!modelRef) {
     return undefined;
   }
-  const modelRef =
-    typeof agentConfig.model === "string" ? agentConfig.model : agentConfig.model.primary;
   const { provider } = splitModelRef(modelRef);
   if (!provider) {
     return undefined;
