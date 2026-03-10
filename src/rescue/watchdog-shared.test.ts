@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { buildRescueProfileEnv, canEnableRescueWatchdog } from "./watchdog-shared.js";
 
 describe("buildRescueProfileEnv", () => {
-  it("preserves explicit state/config path overrides from the monitored profile env", () => {
+  it("recomputes state/config paths for the requested profile", () => {
     const env = buildRescueProfileEnv("work", {
-      OPENCLAW_STATE_DIR: "/data/openclaw",
-      OPENCLAW_CONFIG_PATH: "/data/openclaw/custom.json",
       OPENCLAW_HOME: "/srv/openclaw-home",
       HOME: "/home/tester",
+      OPENCLAW_STATE_DIR: "/srv/openclaw-home/.openclaw-rescue",
+      OPENCLAW_CONFIG_PATH: "/srv/openclaw-home/.openclaw-rescue/openclaw.json",
     });
 
     expect(env.OPENCLAW_PROFILE).toBe("work");
-    expect(env.OPENCLAW_STATE_DIR).toBe("/data/openclaw");
-    expect(env.OPENCLAW_CONFIG_PATH).toBe("/data/openclaw/custom.json");
+    expect(env.OPENCLAW_STATE_DIR).toBe("/srv/openclaw-home/.openclaw-work");
+    expect(env.OPENCLAW_CONFIG_PATH).toBe("/srv/openclaw-home/.openclaw-work/openclaw.json");
   });
 });
 

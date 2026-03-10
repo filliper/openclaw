@@ -59,7 +59,7 @@ describe("onboard rescue helpers", () => {
         env: {
           shellEnv: { enabled: true },
           vars: {
-            OPENAI_API_KEY: "main-key",
+            OPENAI_API_KEY: "main-key", // pragma: allowlist secret
           },
           OPENROUTER_BASE_URL: "https://router.example.test",
         },
@@ -104,7 +104,7 @@ describe("onboard rescue helpers", () => {
     expect(config.env).toEqual({
       shellEnv: { enabled: true },
       vars: {
-        OPENAI_API_KEY: "main-key",
+        OPENAI_API_KEY: "main-key", // pragma: allowlist secret
       },
       OPENROUTER_BASE_URL: "https://router.example.test",
     });
@@ -127,7 +127,7 @@ describe("onboard rescue helpers", () => {
         env: {
           shellEnv: { enabled: false, timeoutMs: 5_000 },
           vars: {
-            OPENAI_API_KEY: "rotated-main-key",
+            OPENAI_API_KEY: "rotated-main-key", // pragma: allowlist secret
           },
           OPENROUTER_BASE_URL: "https://router.example.test",
         },
@@ -148,7 +148,7 @@ describe("onboard rescue helpers", () => {
         env: {
           shellEnv: { enabled: true, timeoutMs: 30_000 },
           vars: {
-            OPENAI_API_KEY: "stale-rescue-key",
+            OPENAI_API_KEY: "stale-rescue-key", // pragma: allowlist secret
             RESCUE_ONLY_KEY: "keep-me",
           },
           RESCUE_ENDPOINT: "https://rescue.example.test",
@@ -172,7 +172,7 @@ describe("onboard rescue helpers", () => {
     expect(config.env).toEqual({
       shellEnv: { enabled: false, timeoutMs: 5_000 },
       vars: {
-        OPENAI_API_KEY: "rotated-main-key",
+        OPENAI_API_KEY: "rotated-main-key", // pragma: allowlist secret
         RESCUE_ONLY_KEY: "keep-me",
       },
       OPENROUTER_BASE_URL: "https://router.example.test",
