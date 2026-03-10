@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import * as tar from "tar";
 import type { RuntimeEnv } from "../runtime.js";
-import { resolveHomeDir, resolveUserPath } from "../utils.js";
+import { sanitizeTerminalText } from "../terminal/safe-text.js";
+import { resolveHomeDir, resolveUserPath, shortenHomePath } from "../utils.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
 import {
   buildBackupArchiveBasename,
@@ -234,24 +235,27 @@ function buildManifest(params: {
 }
 
 function formatTextSummary(result: BackupCreateResult): string[] {
+  const displayArchivePath = sanitizeTerminalText(shortenHomePath(result.archivePath));
   const lines = [
     result.dryRun
-      ? `Planned backup archive: ${result.archivePath}`
+      ? `Planned backup archive: ${displayArchivePath}`
       : result.verified
-        ? `Validated backup archive: ${result.archivePath}`
-        : `Backup archive created without validation: ${result.archivePath}`,
+        ? `Validated backup archive: ${displayArchivePath}`
+        : `Backup archive created without validation: ${displayArchivePath}`,
   ];
   lines.push(`Included ${result.assets.length} path${result.assets.length === 1 ? "" : "s"}:`);
   for (const asset of result.assets) {
-    lines.push(`- ${asset.kind}: ${asset.displayPath}`);
+    lines.push(`- ${asset.kind}: ${sanitizeTerminalText(asset.displayPath)}`);
   }
   if (result.skipped.length > 0) {
     lines.push(`Skipped ${result.skipped.length} path${result.skipped.length === 1 ? "" : "s"}:`);
     for (const entry of result.skipped) {
+      const displayPath = sanitizeTerminalText(entry.displayPath);
+      const coveredBy = entry.coveredBy ? sanitizeTerminalText(entry.coveredBy) : undefined;
       if (entry.reason === "covered" && entry.coveredBy) {
-        lines.push(`- ${entry.kind}: ${entry.displayPath} (${entry.reason} by ${entry.coveredBy})`);
+        lines.push(`- ${entry.kind}: ${displayPath} (${entry.reason} by ${coveredBy})`);
       } else {
-        lines.push(`- ${entry.kind}: ${entry.displayPath} (${entry.reason})`);
+        lines.push(`- ${entry.kind}: ${displayPath} (${entry.reason})`);
       }
     }
   }
