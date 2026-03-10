@@ -529,6 +529,16 @@ export async function runProviderEntry(params: {
   // so provider HTTP calls are routed through the proxy when configured.
   const fetchFn = resolveProxyFetchFromEnv();
 
+  // Check if this is a plugin provider by checking the active plugin registry
+  const { getActivePluginRegistry } = await import("../plugins/runtime.js");
+  const { normalizeProviderId } = await import("../agents/model-selection.js");
+  const pluginRegistry = getActivePluginRegistry();
+  const isPluginProvider =
+    pluginRegistry?.mediaProviders.some(
+      (entry: { provider: { id: string } }) =>
+        normalizeProviderId(entry.provider.id) === providerId,
+    ) ?? false;
+
   if (capability === "audio") {
     if (!provider.transcribeAudio) {
       throw new Error(`Audio transcription provider "${providerId}" not available.`);
@@ -540,13 +550,26 @@ export async function runProviderEntry(params: {
       timeoutMs,
     });
     assertMinAudioSize({ size: media.size, attachmentIndex: params.attachmentIndex });
-    const { apiKeys, baseUrl, headers } = await resolveProviderExecutionContext({
-      providerId,
-      cfg,
-      entry,
-      config: params.config,
-      agentDir: params.agentDir,
-    });
+
+    let apiKeys: string[] = [];
+    let baseUrl: string | undefined;
+    let headers: Record<string, string> | undefined;
+
+    if (!isPluginProvider) {
+      // Standard auth for built-in providers
+      const auth = await resolveProviderExecutionContext({
+        providerId,
+        cfg,
+        entry,
+        config: params.config,
+        agentDir: params.agentDir,
+      });
+      apiKeys = auth.apiKeys;
+      baseUrl = auth.baseUrl;
+      headers = auth.headers;
+    }
+    // For plugin providers, pass empty auth - plugins get credentials from their config
+
     const providerQuery = resolveProviderQuery({
       providerId,
       config: params.config,
@@ -598,13 +621,26 @@ export async function runProviderEntry(params: {
       `Video attachment ${params.attachmentIndex + 1} base64 payload ${estimatedBase64Bytes} exceeds ${maxBase64Bytes}`,
     );
   }
-  const { apiKeys, baseUrl, headers } = await resolveProviderExecutionContext({
-    providerId,
-    cfg,
-    entry,
-    config: params.config,
-    agentDir: params.agentDir,
-  });
+
+  let apiKeys: string[] = [];
+  let baseUrl: string | undefined;
+  let headers: Record<string, string> | undefined;
+
+  if (!isPluginProvider) {
+    // Standard auth for built-in providers
+    const auth = await resolveProviderExecutionContext({
+      providerId,
+      cfg,
+      entry,
+      config: params.config,
+      agentDir: params.agentDir,
+    });
+    apiKeys = auth.apiKeys;
+    baseUrl = auth.baseUrl;
+    headers = auth.headers;
+  }
+  // For plugin providers, pass empty auth - plugins get credentials from their config
+
   const result = await executeWithApiKeyRotation({
     provider: providerId,
     apiKeys,
