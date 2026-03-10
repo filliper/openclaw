@@ -570,9 +570,13 @@ export async function enqueueRun(state: CronServiceState, id: string, mode?: "du
       }
       if (prepared.executionJob.sessionTarget === "isolated") {
         await waitForManualRunCronLaneAdmission(state, id, runId);
+        await finishPreparedManualRun(state, prepared, mode);
+        return { ok: true, ran: true } as const;
       }
-      await finishPreparedManualRun(state, prepared, mode);
-      return { ok: true, ran: true } as const;
+      return await enqueueCommandInLane(CommandLane.Cron, async () => {
+        await finishPreparedManualRun(state, prepared, mode);
+        return { ok: true, ran: true } as const;
+      });
     },
     {
       warnAfterMs: 5_000,

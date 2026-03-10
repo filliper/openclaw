@@ -1725,6 +1725,75 @@ describe("Cron issue regressions", () => {
     clearCommandLane(CommandLane.CronDispatch);
   });
 
+  it("keeps manual main-target runs behind the cron execution limiter", async () => {
+    vi.useRealTimers();
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+    setCommandLaneConcurrency(CommandLane.CronDispatch, 1);
+
+    const store = makeStorePath();
+    const dueAt = Date.parse("2026-02-06T10:05:06.000Z");
+    const job: CronJob = {
+      id: "manual-main-lane-gate",
+      name: "manual main lane gate",
+      enabled: true,
+      createdAtMs: dueAt,
+      updatedAtMs: dueAt,
+      schedule: { kind: "at", at: new Date(dueAt).toISOString() },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "systemEvent", text: "main-target-work" },
+      delivery: { mode: "none" },
+      state: { nextRunAtMs: dueAt },
+    };
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    const blockingCronLaneStarted = createDeferred<void>();
+    const releaseBlockingCronLane = createDeferred<void>();
+    void enqueueCommandInLane(CommandLane.Cron, async () => {
+      blockingCronLaneStarted.resolve();
+      await releaseBlockingCronLane.promise;
+    });
+    await blockingCronLaneStarted.promise;
+
+    const enqueueSystemEvent = vi.fn();
+    const requestHeartbeatNow = vi.fn();
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log: createNoopLogger(),
+      nowMs: () => dueAt,
+      enqueueSystemEvent,
+      requestHeartbeatNow,
+      runIsolatedAgentJob: vi.fn().mockResolvedValue({ status: "ok", summary: "ok" }),
+    });
+
+    const result = await enqueueRun(state, job.id, "force");
+    expect(result).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(enqueueSystemEvent).not.toHaveBeenCalled();
+    expect(requestHeartbeatNow).not.toHaveBeenCalled();
+
+    releaseBlockingCronLane.resolve();
+    await vi.waitFor(() => {
+      expect(enqueueSystemEvent).toHaveBeenCalledWith("main-target-work", {
+        agentId: undefined,
+        sessionKey: undefined,
+        contextKey: `cron:${job.id}`,
+      });
+      expect(requestHeartbeatNow).toHaveBeenCalledWith({
+        reason: `cron:${job.id}`,
+        agentId: undefined,
+        sessionKey: undefined,
+      });
+    });
+
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+  });
+
   // Regression: isolated cron runs must not abort at 1/3 of configured timeoutSeconds.
   // The bug (issue #29774) caused the CLI-provider resume watchdog (ratio 0.3, maxMs 180 s)
   // to be applied on fresh sessions because a persisted cliSessionId was passed to
