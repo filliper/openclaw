@@ -136,6 +136,17 @@ describe("model-selection", () => {
       });
     });
 
+    it("normalizes gemini 3.1 flash-lite for google-vertex provider", () => {
+      expect(parseModelRef("google-vertex/gemini-3.1-flash-lite", "openai")).toEqual({
+        provider: "google-vertex",
+        model: "gemini-3.1-flash-lite-preview",
+      });
+      expect(parseModelRef("gemini-3.1-flash-lite", "google-vertex")).toEqual({
+        provider: "google-vertex",
+        model: "gemini-3.1-flash-lite-preview",
+      });
+    });
+
     it("keeps openai gpt-5.3 codex refs on the openai provider", () => {
       expect(parseModelRef("openai/gpt-5.3-codex", "anthropic")).toEqual({
         provider: "openai",
