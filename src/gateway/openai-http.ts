@@ -17,6 +17,7 @@ import {
   type InputImageLimits,
   type InputImageSource,
 } from "../media/input-files.js";
+import { getGlobalPluginRegistry } from "../plugins/hook-runner-global.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import {
@@ -477,6 +478,65 @@ export async function handleOpenAiHttpRequest(
     runId,
     messageChannel,
   });
+
+  // Run registered dispatch interceptors before starting the Agent.
+  const pluginRegistry = getGlobalPluginRegistry();
+  if (pluginRegistry && pluginRegistry.dispatchInterceptors.length > 0) {
+    for (const interceptor of pluginRegistry.dispatchInterceptors) {
+      const interceptorChunks: string[] = [];
+      const { intercepted } = await interceptor.intercept(
+        prompt.message ?? "",
+        {
+          sessionKey,
+          channelId: messageChannel,
+          userId: user,
+        },
+        {
+          sendBlock: (message: string) => {
+            interceptorChunks.push(message);
+          },
+          sendStreamChunk: (text: string) => {
+            interceptorChunks.push(text);
+          },
+          sendStreamDone: () => {
+            // Collected via interceptorChunks.
+          },
+        },
+      );
+      if (intercepted) {
+        const content = interceptorChunks.join("") || "Request intercepted.";
+        if (!stream) {
+          sendJson(res, 200, {
+            id: runId,
+            object: "chat.completion",
+            created: Math.floor(Date.now() / 1000),
+            model,
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          });
+        } else {
+          setSseHeaders(res);
+          const chunk = {
+            id: runId,
+            object: "chat.completion.chunk",
+            created: Math.floor(Date.now() / 1000),
+            model,
+            choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
+          };
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          writeDone(res);
+          res.end();
+        }
+        return true;
+      }
+    }
+  }
 
   if (!stream) {
     try {
