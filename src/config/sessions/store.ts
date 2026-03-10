@@ -16,6 +16,7 @@ import {
   type DeliveryContext,
 } from "../../utils/delivery-context.js";
 import { getFileStatSnapshot, isCacheEnabled, resolveCacheTtlMs } from "../cache-utils.js";
+import type { SessionStoreAdapter } from "./adapter.js";
 import { enforceSessionDiskBudget, type SessionDiskBudgetSweepResult } from "./disk-budget.js";
 import { deriveSessionMetaPatch } from "./metadata.js";
 import {
@@ -44,6 +45,29 @@ import {
 } from "./types.js";
 
 const log = createSubsystemLogger("sessions/store");
+
+// ============================================================================
+// Plugin Session Store Adapter
+// ============================================================================
+
+let pluginAdapterConfig: {
+  adapter: SessionStoreAdapter;
+  storePath: string;
+} | null = null;
+
+export async function activatePluginSessionStoreAdapter(params: {
+  adapter: SessionStoreAdapter;
+  storePath: string;
+}): Promise<void> {
+  if (params.adapter.warmCache) {
+    await params.adapter.warmCache();
+  }
+  pluginAdapterConfig = { adapter: params.adapter, storePath: params.storePath };
+}
+
+export function clearPluginSessionStoreAdapter(): void {
+  pluginAdapterConfig = null;
+}
 
 // ============================================================================
 // Session Store Cache with TTL Support
@@ -196,6 +220,26 @@ export function loadSessionStore(
   storePath: string,
   opts: LoadSessionStoreOptions = {},
 ): Record<string, SessionEntry> {
+  if (pluginAdapterConfig && storePath === pluginAdapterConfig.storePath) {
+    const adapter = pluginAdapterConfig.adapter;
+    let store: Record<string, SessionEntry>;
+    if (adapter.toRecord) {
+      store = structuredClone(adapter.toRecord());
+    } else {
+      store = {};
+      for (const key of adapter.list()) {
+        const entry = adapter.load(key);
+        if (entry) {
+          store[key] = entry;
+        }
+      }
+      store = structuredClone(store);
+    }
+    applySessionStoreMigrations(store);
+    normalizeSessionStore(store);
+    return store;
+  }
+
   // Check cache first if enabled
   if (!opts.skipCache && isSessionStoreCacheEnabled()) {
     const currentFileStat = getFileStatSnapshot(storePath);
@@ -505,6 +549,20 @@ async function saveSessionStoreUnlocked(
     }
 
     throw err;
+  }
+
+  if (pluginAdapterConfig && storePath === pluginAdapterConfig.storePath) {
+    const adapter = pluginAdapterConfig.adapter;
+    const adapterKeys = new Set(adapter.list());
+    const storeKeys = new Set(Object.keys(store));
+
+    const deletes = [...adapterKeys].filter((k) => !storeKeys.has(k)).map((k) => adapter.delete(k));
+    const saves = Object.entries(store).map(([key, entry]) => adapter.save(key, entry));
+    const results = await Promise.allSettled([...saves, ...deletes]);
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      log.warn(`plugin adapter sync: ${failed.length}/${results.length} operation(s) failed`);
+    }
   }
 }
 
