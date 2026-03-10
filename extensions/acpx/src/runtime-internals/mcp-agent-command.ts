@@ -34,7 +34,7 @@ function quoteCommandPart(value: string): string {
   if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) {
     return value;
   }
-  return `"${value.replace(/["\\]/g, "\\$&")}"`;
+  return `"${value.replace(/["\\\\]/g, "\\\\$&")}"`;
 }
 
 function toCommandLine(parts: string[]): string {
@@ -62,6 +62,7 @@ function readConfiguredAgentOverrides(value: unknown): Record<string, string> {
 async function loadAgentOverrides(params: {
   acpxCommand: string;
   cwd: string;
+  stripProviderAuthEnvVars?: boolean;
   spawnOptions?: SpawnCommandOptions;
 }): Promise<Record<string, string>> {
   const result = await spawnAndCollect(
@@ -69,6 +70,7 @@ async function loadAgentOverrides(params: {
       command: params.acpxCommand,
       args: ["--cwd", params.cwd, "config", "show"],
       cwd: params.cwd,
+      stripProviderAuthEnvVars: params.stripProviderAuthEnvVars,
     },
     params.spawnOptions,
   );
@@ -87,12 +89,14 @@ export async function resolveAcpxAgentCommand(params: {
   acpxCommand: string;
   cwd: string;
   agent: string;
+  stripProviderAuthEnvVars?: boolean;
   spawnOptions?: SpawnCommandOptions;
 }): Promise<string> {
   const normalizedAgent = normalizeAgentName(params.agent);
   const overrides = await loadAgentOverrides({
     acpxCommand: params.acpxCommand,
     cwd: params.cwd,
+    stripProviderAuthEnvVars: params.stripProviderAuthEnvVars,
     spawnOptions: params.spawnOptions,
   });
   return overrides[normalizedAgent] ?? ACPX_BUILTIN_AGENT_COMMANDS[normalizedAgent] ?? params.agent;
