@@ -136,7 +136,7 @@ export function handleNostrProfileToggleAdvanced(host: OpenClawApp) {
 
 export async function handleNostrProfileSave(host: OpenClawApp) {
   const state = host.nostrProfileFormState;
-  if (!state || state.saving) {
+  if (!state || state.saving || state.importing) {
     return;
   }
   const accountId = resolveNostrAccountId(host);
@@ -197,7 +197,7 @@ export async function handleNostrProfileSave(host: OpenClawApp) {
       error: null,
       success: "Profile published to relays.",
       fieldErrors: {},
-      original: { ...state.values },
+      original: { ...currentState.values },
     };
     await loadChannels(host, true);
   } catch (err) {
