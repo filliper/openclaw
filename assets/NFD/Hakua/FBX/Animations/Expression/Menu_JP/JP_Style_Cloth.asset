@@ -1,0 +1,65 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: -340790334, guid: 67cc4cb7839cd3741b63733d5adf0442, type: 3}
+  m_Name: JP_Style_Cloth
+  m_EditorClassIdentifier: 
+  controls:
+  - name: "\u30D9\u30EC\u30FC\u5E3D"
+    icon: {fileID: 2800000, guid: cd9ae080f22c4ab439b1d8acc39bd389, type: 3}
+    type: 102
+    parameter:
+      name: SYNC_CN_CLOTH_HAT
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: bb96333cb2c8fd64689140713c484c99, type: 2}
+    subParameters: []
+    labels: []
+  - name: "\u30D8\u30A2\u30A2\u30AF\u30BB\u30B5\u30EA"
+    icon: {fileID: 2800000, guid: 58fb3941056c8e44b9a2422172300eb9, type: 3}
+    type: 102
+    parameter:
+      name: SYNC_CN_CLOTH_ACC
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters: []
+    labels: []
+  - name: "\u30C9\u30ED\u30EF\u30FC\u30BA"
+    icon: {fileID: 2800000, guid: 87560ed4db8ad1a4f9520a000672b795, type: 3}
+    type: 102
+    parameter:
+      name: SYNC_CN_CLOTH_UNDERWEAR
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters: []
+    labels: []
+  - name: "\u30B7\u30E5\u30FC\u30BA"
+    icon: {fileID: 2800000, guid: 107ae37b85e545241988ccbb062262bd, type: 3}
+    type: 102
+    parameter:
+      name: SYNC_CN_CLOTH_SHOES
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters: []
+    labels: []
+  - name: "\u8896"
+    icon: {fileID: 2800000, guid: 073d3bf28499eaa46989db7804b29cbc, type: 3}
+    type: 102
+    parameter:
+      name: SYNC_CN_CLOTH_SLEEVE
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters: []
+    labels: []

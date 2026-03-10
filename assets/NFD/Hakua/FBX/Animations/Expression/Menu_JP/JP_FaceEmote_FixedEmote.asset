@@ -1,0 +1,95 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: -340790334, guid: 67cc4cb7839cd3741b63733d5adf0442, type: 3}
+  m_Name: JP_FaceEmote_FixedEmote
+  m_EditorClassIdentifier: 
+  controls:
+  - name: "\u8868\u60C5\u56FA\u5B9A ON/OFF"
+    icon: {fileID: 2800000, guid: bc444e88989cdf74ca06a47dab2df7bd, type: 3}
+    type: 102
+    parameter:
+      name: CN_EMOTE_LOCK_ENABLE
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters: []
+    labels: []
+  - name: Face_set1
+    icon: {fileID: 2800000, guid: af1ba8919b0ccb94a99caf43ac36f97d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: d3ab440d06ca04e4eb867b9eeb40588e, type: 2}
+    subParameters: []
+    labels: []
+  - name: Face_set2
+    icon: {fileID: 2800000, guid: af1ba8919b0ccb94a99caf43ac36f97d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: 77849de77b9143f49be33d08a5b7b8b1, type: 2}
+    subParameters: []
+    labels: []
+  - name: Face_set3
+    icon: {fileID: 2800000, guid: af1ba8919b0ccb94a99caf43ac36f97d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: 7f967bfbdb3cb864c8d24c7b2b1268d0, type: 2}
+    subParameters: []
+    labels: []
+  - name: Face_set4
+    icon: {fileID: 2800000, guid: af1ba8919b0ccb94a99caf43ac36f97d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: e028c27a8f7d13746a9d680518e8da07, type: 2}
+    subParameters: []
+    labels: []
+  - name: Face_set5
+    icon: {fileID: 2800000, guid: af1ba8919b0ccb94a99caf43ac36f97d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: 928d44abf83eb3f43a9d8cc57a29ca3a, type: 2}
+    subParameters: []
+    labels: []
+  - name: Face_set6
+    icon: {fileID: 2800000, guid: af1ba8919b0ccb94a99caf43ac36f97d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: 67653c4604732c14a9bada524573f6cd, type: 2}
+    subParameters: []
+    labels: []
+  - name: Face_set7
+    icon: {fileID: 2800000, guid: af1ba8919b0ccb94a99caf43ac36f97d, type: 3}
+    type: 103
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 11400000, guid: 382edc8cbe13c494482095d92192535a, type: 2}
+    subParameters: []
+    labels: []

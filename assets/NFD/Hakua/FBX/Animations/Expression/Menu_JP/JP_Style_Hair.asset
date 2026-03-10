@@ -1,0 +1,59 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: -340790334, guid: 67cc4cb7839cd3741b63733d5adf0442, type: 3}
+  m_Name: JP_Style_Hair
+  m_EditorClassIdentifier: 
+  controls:
+  - name: "\u524D\u306E\u9577\u3055"
+    icon: {fileID: 2800000, guid: 2469c7f08b7716a45bf3f0a6582dceee, type: 3}
+    type: 203
+    parameter:
+      name: 
+    value: 0.5
+    style: 0
+    subMenu: {fileID: 11400000, guid: bb96333cb2c8fd64689140713c484c99, type: 2}
+    subParameters:
+    - name: SYNC_CN_HAIR_FRONT_LENGTH
+    labels: []
+  - name: "\u5F8C\u308D\u306E\u9577\u3055"
+    icon: {fileID: 2800000, guid: da70bdca118fd3c49ba5b97d8f21472c, type: 3}
+    type: 203
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters:
+    - name: SYNC_CN_HAIR_BACK_LENGTH
+    labels: []
+  - name: "\u30B5\u30A4\u30C9\u306E\u9577\u3055A"
+    icon: {fileID: 2800000, guid: 0118c32e61c11424ab98f1a13290a38a, type: 3}
+    type: 203
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters:
+    - name: SYNC_CN_HAIR_SIDEA_LENGTH
+    labels: []
+  - name: "\u30B5\u30A4\u30C9\u306E\u9577\u3055B"
+    icon: {fileID: 2800000, guid: aed22b55cdebb9e4eae4161d8576ce93, type: 3}
+    type: 203
+    parameter:
+      name: 
+    value: 1
+    style: 0
+    subMenu: {fileID: 0}
+    subParameters:
+    - name: SYNC_CN_HAIR_SIDEB_LENGTH
+    labels: []

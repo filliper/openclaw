@@ -41,6 +41,7 @@ export type AcpxPluginConfig = {
   timeoutSeconds?: number;
   queueOwnerTtlSeconds?: number;
   mcpServers?: Record<string, McpServerConfig>;
+  codexHarness?: boolean;
 };
 
 export type ResolvedAcpxPluginConfig = {
@@ -55,6 +56,7 @@ export type ResolvedAcpxPluginConfig = {
   timeoutSeconds?: number;
   queueOwnerTtlSeconds: number;
   mcpServers: Record<string, McpServerConfig>;
+  codexHarness: boolean;
 };
 
 const DEFAULT_PERMISSION_MODE: AcpxPermissionMode = "approve-reads";
@@ -127,6 +129,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
     "timeoutSeconds",
     "queueOwnerTtlSeconds",
     "mcpServers",
+    "codexHarness",
   ]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
@@ -213,6 +216,11 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
     }
   }
 
+  const codexHarness = value.codexHarness;
+  if (codexHarness !== undefined && typeof codexHarness !== "boolean") {
+    return { ok: false, message: "codexHarness must be a boolean" };
+  }
+
   return {
     ok: true,
     value: {
@@ -228,6 +236,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
       queueOwnerTtlSeconds:
         typeof queueOwnerTtlSeconds === "number" ? queueOwnerTtlSeconds : undefined,
       mcpServers: mcpServers as Record<string, McpServerConfig> | undefined,
+      codexHarness: typeof codexHarness === "boolean" ? codexHarness : undefined,
     },
   };
 }
@@ -281,6 +290,7 @@ export function createAcpxPluginConfigSchema(): OpenClawPluginConfigSchema {
         strictWindowsCmdWrapper: { type: "boolean" },
         timeoutSeconds: { type: "number", minimum: 0.001 },
         queueOwnerTtlSeconds: { type: "number", minimum: 0 },
+        codexHarness: { type: "boolean" },
         mcpServers: {
           type: "object",
           additionalProperties: {
@@ -353,5 +363,6 @@ export function resolveAcpxPluginConfig(params: {
     timeoutSeconds: normalized.timeoutSeconds,
     queueOwnerTtlSeconds: normalized.queueOwnerTtlSeconds ?? DEFAULT_QUEUE_OWNER_TTL_SECONDS,
     mcpServers: normalized.mcpServers ?? {},
+    codexHarness: normalized.codexHarness ?? false,
   };
 }

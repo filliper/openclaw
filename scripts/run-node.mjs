@@ -176,6 +176,76 @@ const logRunner = (message, deps) => {
   deps.stderr.write(`[openclaw] ${message}\n`);
 };
 
+const checkNodeModules = (deps) => {
+  const nodeModulesBin = path.join(deps.cwd, "node_modules", ".bin");
+  const nodeModulesPnpm = path.join(deps.cwd, "node_modules", ".pnpm");
+
+  if (!deps.fs.existsSync(nodeModulesBin) || !deps.fs.existsSync(nodeModulesPnpm)) {
+    return { ok: false, reason: "node_modules is missing or incomplete" };
+  }
+
+  const tsdownBin =
+    deps.platform === "win32"
+      ? path.join(nodeModulesBin, `${compiler}.cmd`)
+      : path.join(nodeModulesBin, compiler);
+
+  if (!deps.fs.existsSync(tsdownBin)) {
+    return { ok: false, reason: `build tool '${compiler}' is not in node_modules/.bin` };
+  }
+
+  const tsdownPkg = path.join(deps.cwd, "node_modules", compiler);
+  if (!deps.fs.existsSync(tsdownPkg)) {
+    return { ok: false, reason: `build tool '${compiler}' stub exists but package is not installed` };
+  }
+
+  return { ok: true };
+};
+
+const resolvePnpmCommand = (deps) => {
+  if (deps.platform === "win32") {
+    const pnpmCheck = deps.spawnSync("cmd.exe", ["/d", "/s", "/c", "where pnpm"], {
+      cwd: deps.cwd,
+      env: deps.env,
+      stdio: "ignore",
+    });
+    if (pnpmCheck.status === 0) {
+      return { command: "cmd.exe", args: ["/d", "/s", "/c", "pnpm", ...compilerArgs] };
+    }
+
+    const corepackCheck = deps.spawnSync("cmd.exe", ["/d", "/s", "/c", "where corepack"], {
+      cwd: deps.cwd,
+      env: deps.env,
+      stdio: "ignore",
+    });
+    if (corepackCheck.status === 0) {
+      return {
+        command: "cmd.exe",
+        args: ["/d", "/s", "/c", "corepack", "pnpm", ...compilerArgs],
+      };
+    }
+  } else {
+    const pnpmCheck = deps.spawnSync("sh", ["-lc", "command -v pnpm"], {
+      cwd: deps.cwd,
+      env: deps.env,
+      stdio: "ignore",
+    });
+    if (pnpmCheck.status === 0) {
+      return { command: "pnpm", args: compilerArgs };
+    }
+
+    const corepackCheck = deps.spawnSync("sh", ["-lc", "command -v corepack"], {
+      cwd: deps.cwd,
+      env: deps.env,
+      stdio: "ignore",
+    });
+    if (corepackCheck.status === 0) {
+      return { command: "corepack", args: ["pnpm", ...compilerArgs] };
+    }
+  }
+
+  return null;
+};
+
 const runOpenClaw = async (deps) => {
   const nodeProcess = deps.spawn(deps.execPath, ["openclaw.mjs", ...deps.args], {
     cwd: deps.cwd,
@@ -230,11 +300,21 @@ export async function runNodeMain(params = {}) {
     return await runOpenClaw(deps);
   }
 
+  const depsCheck = checkNodeModules(deps);
+  if (!depsCheck.ok) {
+    logRunner(
+      `Dependencies are missing or incomplete (${depsCheck.reason}); run \`pnpm install\` in the project root to restore them.`,
+      deps,
+    );
+    return 1;
+  }
   logRunner("Building TypeScript (dist is stale).", deps);
-  const buildCmd = deps.platform === "win32" ? "cmd.exe" : "pnpm";
-  const buildArgs =
-    deps.platform === "win32" ? ["/d", "/s", "/c", "pnpm", ...compilerArgs] : compilerArgs;
-  const build = deps.spawn(buildCmd, buildArgs, {
+  const buildPlan = resolvePnpmCommand(deps);
+  if (!buildPlan) {
+    logRunner("Neither pnpm nor corepack was found in PATH.", deps);
+    return 1;
+  }
+  const build = deps.spawn(buildPlan.command, buildPlan.args, {
     cwd: deps.cwd,
     env: deps.env,
     stdio: "inherit",
