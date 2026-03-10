@@ -110,6 +110,75 @@ describe("resolveAcpClientSpawnEnv", () => {
     expect(env.OPENCLAW_SHELL).toBe("acp-client");
     expect(env.OPENAI_API_KEY).toBeUndefined();
   });
+
+  it("applies agentEnv overrides on top of baseEnv", () => {
+    const authTokenEnv = envVar("ANTHROPIC", "AUTH", "TOKEN");
+    const env = resolveAcpClientSpawnEnv(
+      {
+        PATH: "/usr/bin",
+        [authTokenEnv]: "stale-global-token", // pragma: allowlist secret
+      },
+      {
+        agentEnv: {
+          [authTokenEnv]: "agent-specific-token", // pragma: allowlist secret
+        },
+      },
+    );
+
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-specific-token");
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.OPENCLAW_SHELL).toBe("acp-client");
+  });
+
+  it("agentEnv overrides are applied after stripKeys", () => {
+    const authTokenEnv = envVar("ANTHROPIC", "AUTH", "TOKEN");
+    const openAiApiKeyEnv = envVar("OPENAI", "API", "KEY");
+    const env = resolveAcpClientSpawnEnv(
+      {
+        [authTokenEnv]: "polluted-token", // pragma: allowlist secret
+        [openAiApiKeyEnv]: "skill-leaked-key", // pragma: allowlist secret
+      },
+      {
+        stripKeys: new Set([authTokenEnv, openAiApiKeyEnv]),
+        agentEnv: {
+          [authTokenEnv]: "correct-agent-token", // pragma: allowlist secret
+        },
+      },
+    );
+
+    // agentEnv re-applies the correct token after strip
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("correct-agent-token");
+    // stripped key without agentEnv override stays removed
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("agentEnv can introduce new env vars not in baseEnv", () => {
+    const baseUrlEnv = envVar("ANTHROPIC", "BASE", "URL");
+    const env = resolveAcpClientSpawnEnv(
+      { PATH: "/usr/bin" },
+      {
+        agentEnv: {
+          [baseUrlEnv]: "https://custom.api.example.com",
+        },
+      },
+    );
+
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://custom.api.example.com");
+    expect(env.PATH).toBe("/usr/bin");
+  });
+
+  it("agentEnv cannot override OPENCLAW_SHELL", () => {
+    const env = resolveAcpClientSpawnEnv(
+      { PATH: "/usr/bin" },
+      {
+        agentEnv: {
+          OPENCLAW_SHELL: "should-be-ignored",
+        },
+      },
+    );
+
+    expect(env.OPENCLAW_SHELL).toBe("acp-client");
+  });
 });
 
 describe("resolveAcpClientSpawnInvocation", () => {
@@ -188,7 +257,9 @@ describe("resolvePermissionRequest", () => {
     });
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith(params.expectedToolName, params.expectedTitle);
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject" },
+    });
   }
 
   async function expectAutoAllowWithoutPrompt(params: {
@@ -202,13 +273,20 @@ describe("resolvePermissionRequest", () => {
       cwd: params.cwd,
     });
     expect(prompt).not.toHaveBeenCalled();
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "allow" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
   }
 
   it("auto-approves safe tools without prompting", async () => {
     const prompt = vi.fn(async () => true);
-    const res = await resolvePermissionRequest(makePermissionRequest(), { prompt, log: () => {} });
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "allow" } });
+    const res = await resolvePermissionRequest(makePermissionRequest(), {
+      prompt,
+      log: () => {},
+    });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
     expect(prompt).not.toHaveBeenCalled();
   });
 
@@ -216,37 +294,55 @@ describe("resolvePermissionRequest", () => {
     const prompt = vi.fn(async () => true);
     const res = await resolvePermissionRequest(
       makePermissionRequest({
-        toolCall: { toolCallId: "tool-2", title: "exec: uname -a", status: "pending" },
+        toolCall: {
+          toolCallId: "tool-2",
+          title: "exec: uname -a",
+          status: "pending",
+        },
       }),
       { prompt, log: () => {} },
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith("exec", "exec: uname -a");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "allow" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
   });
 
   it("prompts for non-read/search tools (write)", async () => {
     const prompt = vi.fn(async () => true);
     const res = await resolvePermissionRequest(
       makePermissionRequest({
-        toolCall: { toolCallId: "tool-w", title: "write: /tmp/pwn", status: "pending" },
+        toolCall: {
+          toolCallId: "tool-w",
+          title: "write: /tmp/pwn",
+          status: "pending",
+        },
       }),
       { prompt, log: () => {} },
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith("write", "write: /tmp/pwn");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "allow" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
   });
 
   it("auto-approves search without prompting", async () => {
     const prompt = vi.fn(async () => true);
     const res = await resolvePermissionRequest(
       makePermissionRequest({
-        toolCall: { toolCallId: "tool-s", title: "search: foo", status: "pending" },
+        toolCall: {
+          toolCallId: "tool-s",
+          title: "search: foo",
+          status: "pending",
+        },
       }),
       { prompt, log: () => {} },
     );
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "allow" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
     expect(prompt).not.toHaveBeenCalled();
   });
 
@@ -254,13 +350,19 @@ describe("resolvePermissionRequest", () => {
     const prompt = vi.fn(async () => false);
     const res = await resolvePermissionRequest(
       makePermissionRequest({
-        toolCall: { toolCallId: "tool-r", title: "read: ~/.ssh/id_rsa", status: "pending" },
+        toolCall: {
+          toolCallId: "tool-r",
+          title: "read: ~/.ssh/id_rsa",
+          status: "pending",
+        },
       }),
       { prompt, log: () => {} },
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith("read", "read: ~/.ssh/id_rsa");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject" },
+    });
   });
 
   it("auto-approves read when rawInput path resolves inside cwd", async () => {
@@ -306,7 +408,9 @@ describe("resolvePermissionRequest", () => {
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith("read", "read: ignored-by-raw-input");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject" },
+    });
   });
 
   it("prompts for read when scoped path is missing", async () => {
@@ -323,20 +427,28 @@ describe("resolvePermissionRequest", () => {
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith("read", "read");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject" },
+    });
   });
 
   it("prompts for non-core read-like tool names", async () => {
     const prompt = vi.fn(async () => false);
     const res = await resolvePermissionRequest(
       makePermissionRequest({
-        toolCall: { toolCallId: "tool-fr", title: "fs_read: ~/.ssh/id_rsa", status: "pending" },
+        toolCall: {
+          toolCallId: "tool-fr",
+          title: "fs_read: ~/.ssh/id_rsa",
+          status: "pending",
+        },
       }),
       { prompt, log: () => {} },
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith("fs_read", "fs_read: ~/.ssh/id_rsa");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject" },
+    });
   });
 
   it.each([
@@ -362,7 +474,9 @@ describe("resolvePermissionRequest", () => {
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith(expectedToolName, title);
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject" },
+    });
   });
 
   it("prompts when kind is spoofed as read", async () => {
@@ -380,23 +494,35 @@ describe("resolvePermissionRequest", () => {
     );
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith("thread", "thread: reply");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject" },
+    });
   });
 
   it("uses allow_always and reject_always when once options are absent", async () => {
     const options: RequestPermissionRequest["options"] = [
       { kind: "allow_always", name: "Always allow", optionId: "allow-always" },
-      { kind: "reject_always", name: "Always reject", optionId: "reject-always" },
+      {
+        kind: "reject_always",
+        name: "Always reject",
+        optionId: "reject-always",
+      },
     ];
     const prompt = vi.fn(async () => false);
     const res = await resolvePermissionRequest(
       makePermissionRequest({
-        toolCall: { toolCallId: "tool-3", title: "gateway: reload", status: "pending" },
+        toolCall: {
+          toolCallId: "tool-3",
+          title: "gateway: reload",
+          status: "pending",
+        },
         options,
       }),
       { prompt, log: () => {} },
     );
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "reject-always" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "reject-always" },
+    });
   });
 
   it("prompts when tool identity is unknown and can still approve", async () => {
@@ -412,7 +538,9 @@ describe("resolvePermissionRequest", () => {
       { prompt, log: () => {} },
     );
     expect(prompt).toHaveBeenCalledWith(undefined, "Modifying critical configuration file");
-    expect(res).toEqual({ outcome: { outcome: "selected", optionId: "allow" } });
+    expect(res).toEqual({
+      outcome: { outcome: "selected", optionId: "allow" },
+    });
   });
 
   it("prompts when metadata tool name contains invalid characters", async () => {
@@ -488,8 +616,16 @@ describe("acp event mapper", () => {
   it("extracts text and resource blocks into prompt text", () => {
     const text = extractTextFromPrompt([
       { type: "text", text: "Hello" },
-      { type: "resource", resource: { uri: "file:///tmp/spec.txt", text: "File contents" } },
-      { type: "resource_link", uri: "https://example.com", name: "Spec", title: "Spec" },
+      {
+        type: "resource",
+        resource: { uri: "file:///tmp/spec.txt", text: "File contents" },
+      },
+      {
+        type: "resource_link",
+        uri: "https://example.com",
+        name: "Spec",
+        title: "Spec",
+      },
       { type: "image", data: "abc", mimeType: "image/png" },
     ]);
 
@@ -550,7 +686,12 @@ describe("acp event mapper", () => {
   it("keeps full resource link title content without truncation", () => {
     const longTitle = "x".repeat(512);
     const text = extractTextFromPrompt([
-      { type: "resource_link", uri: "https://example.com", name: "Spec", title: longTitle },
+      {
+        type: "resource_link",
+        uri: "https://example.com",
+        name: "Spec",
+        title: longTitle,
+      },
     ]);
 
     expect(text).toContain(`(${longTitle})`);

@@ -40,7 +40,12 @@ import {
   resolveAcpSpawnStreamLogPath,
   startAcpSpawnParentStreamRelay,
 } from "./acp-spawn-parent-stream.js";
+import { resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
+import { PROVIDER_ENV_API_KEY_CANDIDATES } from "./model-auth-env-vars.js";
+import { getCustomProviderApiKey } from "./model-auth.js";
+import { normalizeProviderId } from "./model-selection.js";
 import { resolveSandboxRuntimeStatus } from "./sandbox/runtime-status.js";
+import { splitModelRef } from "./subagent-spawn.js";
 import { resolveInternalSessionKey, resolveMainSessionAlias } from "./tools/sessions-helpers.js";
 
 const log = createSubsystemLogger("agents/acp-spawn");
@@ -303,6 +308,44 @@ function prepareAcpThreadBinding(params: {
   };
 }
 
+/**
+ * Resolve per-agent env overrides for the ACP-spawned CC process.
+ * Extracts the target agent's provider API key and baseUrl from config
+ * so the spawned process gets the correct credentials instead of
+ * inheriting potentially polluted process.env values.
+ */
+function resolveAcpSpawnAgentEnv(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+}): Record<string, string> | undefined {
+  const modelRef = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId);
+  if (!modelRef) {
+    return undefined;
+  }
+  const { provider } = splitModelRef(modelRef);
+  if (!provider) {
+    return undefined;
+  }
+  const normalizedProvider = normalizeProviderId(provider);
+  const apiKey = getCustomProviderApiKey(params.cfg, normalizedProvider);
+  if (!apiKey) {
+    return undefined;
+  }
+  const candidates = PROVIDER_ENV_API_KEY_CANDIDATES[normalizedProvider];
+  // Use the last candidate (most generic, e.g. ANTHROPIC_API_KEY over ANTHROPIC_OAUTH_TOKEN).
+  const envVarName = candidates?.[candidates.length - 1];
+  if (!envVarName) {
+    return undefined;
+  }
+  const env: Record<string, string> = { [envVarName]: apiKey };
+  const providers = params.cfg.models?.providers ?? {};
+  const providerConfig = providers[provider] ?? providers[normalizedProvider];
+  if (providerConfig && typeof providerConfig.baseUrl === "string" && providerConfig.baseUrl) {
+    env[`${envVarName.replace(/_API_KEY$|_OAUTH_TOKEN$/, "")}_BASE_URL`] = providerConfig.baseUrl;
+  }
+  return env;
+}
+
 export async function spawnAcpDirect(
   params: SpawnAcpParams,
   ctx: SpawnAcpContext,
@@ -422,6 +465,7 @@ export async function spawnAcpDirect(
         stage: "spawn",
       });
     }
+    const agentEnv = resolveAcpSpawnAgentEnv({ cfg, agentId: targetAgentId });
     const initialized = await acpManager.initializeSession({
       cfg,
       sessionKey,
@@ -430,6 +474,7 @@ export async function spawnAcpDirect(
       resumeSessionId: params.resumeSessionId,
       cwd: params.cwd,
       backendId: cfg.acp?.backend,
+      agentEnv,
     });
     initializedRuntime = {
       runtime: initialized.runtime,
