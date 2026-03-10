@@ -509,7 +509,9 @@ export async function runProviderEntry(params: {
         agentDir: params.agentDir,
         cfg: params.cfg,
       };
-      result = await describeImageWithModel(imageInput);
+      // For non-plugin providers, use their describeImage if available, otherwise built-in
+      const describeImageFn = provider?.describeImage ?? describeImageWithModel;
+      result = await describeImageFn(imageInput);
     }
     return {
       kind: "image.description",
