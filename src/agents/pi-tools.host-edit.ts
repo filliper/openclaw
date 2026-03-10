@@ -143,7 +143,8 @@ function hasSharedPreFilterChunk(fileLine: string, oldLine: string): boolean {
     oldTrimmed.length < FUZZY_PREFILTER_CHUNK_LEN ||
     fileTrimmed.length < FUZZY_PREFILTER_CHUNK_LEN
   ) {
-    return fileTrimmed.includes(oldTrimmed) || oldTrimmed.includes(fileTrimmed);
+    // Short lines are cheap to score with LCS, so skip the substring gate entirely.
+    return true;
   }
 
   const lastChunkStart = oldTrimmed.length - FUZZY_PREFILTER_CHUNK_LEN;
