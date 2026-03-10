@@ -517,10 +517,7 @@ function resolveEdgeOutputFormat(config: ResolvedTtsConfig): string {
   return config.edge.outputFormat;
 }
 
-export function resolveTtsApiKey(
-  config: ResolvedTtsConfig,
-  provider: TtsProvider,
-): string | undefined {
+export function resolveTtsApiKey(config: ResolvedTtsConfig, provider: string): string | undefined {
   if (provider === "elevenlabs") {
     return config.elevenlabs.apiKey || process.env.ELEVENLABS_API_KEY || process.env.XI_API_KEY;
   }
@@ -543,7 +540,7 @@ export function isTtsProviderConfigured(config: ResolvedTtsConfig, provider: Tts
   return Boolean(resolveTtsApiKey(config, provider));
 }
 
-function formatTtsProviderError(provider: TtsProvider, err: unknown): string {
+function formatTtsProviderError(provider: string, err: unknown): string {
   const error = err instanceof Error ? err : new Error(String(err));
   if (error.name === "AbortError") {
     return `${provider}: request timed out`;
@@ -581,7 +578,17 @@ export async function textToSpeech(params: {
   const userProvider = getTtsProvider(config, prefsPath);
   const overrideProvider = params.overrides?.provider;
   const primaryProvider = overrideProvider ?? userProvider;
-  const providerOrder = resolveTtsProviderOrder(primaryProvider);
+
+  const builtinSet = new Set<string>(TTS_PROVIDERS);
+  const customPlugins: string[] = [];
+  for (const [, pluginProvider] of pluginTtsRegistry) {
+    if (pluginProvider.id !== primaryProvider && !builtinSet.has(pluginProvider.id)) {
+      customPlugins.push(pluginProvider.id);
+    }
+  }
+
+  const otherBuiltins = TTS_PROVIDERS.filter((p) => p !== primaryProvider);
+  const providerOrder = [primaryProvider, ...customPlugins, ...otherBuiltins];
 
   const errors: string[] = [];
 
@@ -766,41 +773,6 @@ export async function textToSpeech(params: {
     }
   }
 
-  const builtinSet = new Set<string>(TTS_PROVIDERS);
-  for (const [, pluginProvider] of pluginTtsRegistry) {
-    if (builtinSet.has(pluginProvider.id)) {
-      continue;
-    }
-    const provider = pluginProvider.id;
-    const providerStart = Date.now();
-    try {
-      const result = await pluginProvider.textToSpeech({
-        text: params.text,
-        apiKey: "",
-        timeoutMs: config.timeoutMs,
-      });
-
-      const tempRoot = resolvePreferredOpenClawTmpDir();
-      mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
-      const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
-      const mimeExt = result.mime.split("/")[1]?.split(";")[0] || "mp3";
-      const audioPath = path.join(tempDir, `voice-${Date.now()}.${mimeExt}`);
-      writeFileSync(audioPath, result.audio);
-      scheduleCleanup(tempDir);
-
-      return {
-        success: true,
-        audioPath,
-        latencyMs: Date.now() - providerStart,
-        provider,
-        outputFormat: result.mime,
-        voiceCompatible: isVoiceCompatibleAudio({ fileName: audioPath }),
-      };
-    } catch (err) {
-      errors.push(`${provider}: ${String(err)}`);
-    }
-  }
-
   return buildTtsFailureResult(errors);
 }
 
@@ -821,7 +793,17 @@ export async function textToSpeechTelephony(params: {
 
   const pluginTtsRegistry = await buildPluginTtsRegistry();
   const userProvider = getTtsProvider(config, prefsPath);
-  const providers = resolveTtsProviderOrder(userProvider);
+
+  const builtinSetTelephony = new Set<string>(TTS_PROVIDERS);
+  const customPluginsTelephony: string[] = [];
+  for (const [, pluginProvider] of pluginTtsRegistry) {
+    if (pluginProvider.id !== userProvider && !builtinSetTelephony.has(pluginProvider.id)) {
+      customPluginsTelephony.push(pluginProvider.id);
+    }
+  }
+
+  const otherBuiltinsTelephony = TTS_PROVIDERS.filter((p) => p !== userProvider);
+  const providers = [userProvider, ...customPluginsTelephony, ...otherBuiltinsTelephony];
 
   const errors: string[] = [];
 
@@ -911,33 +893,6 @@ export async function textToSpeechTelephony(params: {
       };
     } catch (err) {
       errors.push(formatTtsProviderError(provider, err));
-    }
-  }
-
-  const builtinSetTelephony = new Set<string>(TTS_PROVIDERS);
-  for (const [, pluginProvider] of pluginTtsRegistry) {
-    if (builtinSetTelephony.has(pluginProvider.id)) {
-      continue;
-    }
-    const provider = pluginProvider.id;
-    const providerStart = Date.now();
-    try {
-      const result = await pluginProvider.textToSpeech({
-        text: params.text,
-        apiKey: "",
-        timeoutMs: config.timeoutMs,
-      });
-
-      return {
-        success: true,
-        audioBuffer: result.audio,
-        outputFormat: result.mime,
-        sampleRate: result.sampleRate,
-        latencyMs: Date.now() - providerStart,
-        provider,
-      };
-    } catch (err) {
-      errors.push(`${provider}: ${String(err)}`);
     }
   }
 
