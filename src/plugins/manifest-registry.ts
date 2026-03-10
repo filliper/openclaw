@@ -235,6 +235,7 @@ export function loadPluginManifestRegistry(params: {
         continue;
       }
 
+      const overriddenCandidate = candidateRank < existingRank ? existing.candidate : candidate;
       if (candidateRank < existingRank) {
         records[existing.recordIndex] = record;
         seenIds.set(manifest.id, { candidate, recordIndex: existing.recordIndex });
@@ -242,8 +243,8 @@ export function loadPluginManifestRegistry(params: {
       diagnostics.push({
         level: "warn",
         pluginId: manifest.id,
-        source: candidate.source,
-        message: `duplicate plugin id detected; later plugin may be overridden (${candidate.source})`,
+        source: overriddenCandidate.source,
+        message: `duplicate plugin id detected; later plugin may be overridden (${overriddenCandidate.source})`,
       });
       continue;
     }
