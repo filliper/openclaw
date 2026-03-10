@@ -156,24 +156,27 @@ export async function monitorWebhook({
   server.on("request", createPoolDispatcher(entry));
 
   return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      server.close();
-      webhookServerPool.delete(serverKey);
-      for (const aid of entry.routes.keys()) {
-        httpServers.delete(aid);
-        botOpenIds.delete(aid);
-        botNames.delete(aid);
+    // Remove only this account's route; close the server only when no routes remain.
+    // This mirrors the joiner's abort handler so creator and joiner behave identically.
+    const removeOwnRoute = () => {
+      entry.routes.delete(accountId);
+      httpServers.delete(accountId);
+      botOpenIds.delete(accountId);
+      botNames.delete(accountId);
+      if (entry.routes.size === 0) {
+        server.close();
+        webhookServerPool.delete(serverKey);
       }
     };
 
     const handleAbort = () => {
-      log(`feishu[${accountId}]: abort signal received, stopping Webhook server`);
-      cleanup();
+      log(`feishu[${accountId}]: abort signal received, leaving Webhook server on ${serverKey}`);
+      removeOwnRoute();
       resolve();
     };
 
     if (abortSignal?.aborted) {
-      cleanup();
+      removeOwnRoute();
       resolve();
       return;
     }
@@ -186,6 +189,14 @@ export async function monitorWebhook({
 
     server.on("error", (err) => {
       error(`feishu[${accountId}]: Webhook server error: ${err}`);
+      // Clean pool state so the next restart does not join a dead server.
+      server.close();
+      webhookServerPool.delete(serverKey);
+      for (const aid of entry.routes.keys()) {
+        httpServers.delete(aid);
+        botOpenIds.delete(aid);
+        botNames.delete(aid);
+      }
       abortSignal?.removeEventListener("abort", handleAbort);
       reject(err);
     });
@@ -260,16 +271,30 @@ function createPoolDispatcher(entry: WebhookServerEntry) {
     }
 
     // Multi-account: buffer body to extract the routing token.
-    // Enforce the same body size limit used by the per-account guard so an
-    // oversized payload is rejected before we finish buffering.
+    // Enforce the same body size limit and timeout used by the per-account guard
+    // so an oversized or slow payload is rejected before we finish buffering.
     const chunks: Buffer[] = [];
     let totalBytes = 0;
     let aborted = false;
+
+    const bodyTimeout = setTimeout(() => {
+      if (aborted) return;
+      aborted = true;
+      res.statusCode = 408;
+      res.end("Request Timeout");
+      req.destroy();
+    }, FEISHU_WEBHOOK_BODY_TIMEOUT_MS);
+
+    const finishBuffering = () => {
+      clearTimeout(bodyTimeout);
+    };
+
     req.on("data", (c: Buffer) => {
       if (aborted) return;
       totalBytes += c.length;
       if (totalBytes > FEISHU_WEBHOOK_MAX_BODY_BYTES) {
         aborted = true;
+        finishBuffering();
         res.statusCode = 413;
         res.end("Payload Too Large");
         req.destroy();
@@ -278,6 +303,7 @@ function createPoolDispatcher(entry: WebhookServerEntry) {
       chunks.push(c);
     });
     req.on("end", () => {
+      finishBuffering();
       if (aborted) return;
       const raw = Buffer.concat(chunks);
       const route = resolveRoute(entry, raw);
@@ -289,6 +315,7 @@ function createPoolDispatcher(entry: WebhookServerEntry) {
       route.handler(replayRequest(req, raw), res);
     });
     req.on("error", () => {
+      finishBuffering();
       if (!res.headersSent) {
         res.statusCode = 400;
         res.end("Bad Request");
@@ -297,7 +324,11 @@ function createPoolDispatcher(entry: WebhookServerEntry) {
   };
 }
 
-/** Pick the matching route by verification token, then app_id. */
+/** Pick the matching route using a three-tier strategy:
+ *  1. token + appId  (strongest — disambiguates shared/inherited tokens)
+ *  2. token-only     (sufficient when tokens are unique per account)
+ *  3. appId-only     (fallback when verificationToken is absent)
+ *  4. url_verification → any account can respond. */
 function resolveRoute(entry: WebhookServerEntry, body: Buffer) {
   let token: string | undefined;
   let appId: string | undefined;
@@ -311,11 +342,25 @@ function resolveRoute(entry: WebhookServerEntry, body: Buffer) {
     return undefined;
   }
 
-  for (const route of entry.routes.values()) {
-    if (token && route.token && route.token === token) return route;
+  // Tier 1: both token and appId match — handles shared/inherited tokens.
+  if (token && appId) {
+    for (const route of entry.routes.values()) {
+      if (route.token && route.token === token && route.appId && route.appId === appId) {
+        return route;
+      }
+    }
   }
-  for (const route of entry.routes.values()) {
-    if (appId && route.appId && route.appId === appId) return route;
+  // Tier 2: token-only (unique token per account).
+  if (token) {
+    for (const route of entry.routes.values()) {
+      if (route.token && route.token === token) return route;
+    }
+  }
+  // Tier 3: appId-only (verificationToken absent).
+  if (appId) {
+    for (const route of entry.routes.values()) {
+      if (route.appId && route.appId === appId) return route;
+    }
   }
   // url_verification: any account can respond.
   if (type === "url_verification") return entry.routes.values().next().value;
