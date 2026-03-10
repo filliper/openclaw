@@ -606,7 +606,6 @@ export class AcpSessionManager {
         const resolution = this.resolveSession({
           cfg: input.cfg,
           sessionKey,
-
         });
         if (resolution.kind === "none") {
           throw new AcpRuntimeError(
@@ -754,17 +753,18 @@ export class AcpSessionManager {
             }
           }
           if (meta.mode === "oneshot") {
+            let closeTimerId: ReturnType<typeof setTimeout> | undefined;
             try {
               const cleanupTimeoutMs = 5000;
-              const closeTimeout = new Promise<never>((_, reject) =>
-                setTimeout(
+              const closeTimeout = new Promise<never>((_, reject) => {
+                closeTimerId = setTimeout(
                   () =>
                     reject(
                       new Error(`acp-manager: runtime.close timed out after ${cleanupTimeoutMs}ms`),
                     ),
                   cleanupTimeoutMs,
-                ),
-              );
+                );
+              });
               await Promise.race([
                 runtime.close({
                   handle,
@@ -777,6 +777,7 @@ export class AcpSessionManager {
                 `acp-manager: ACP oneshot close failed for ${sessionKey}: ${String(error)}`,
               );
             } finally {
+              clearTimeout(closeTimerId);
               this.clearCachedRuntimeState(sessionKey);
             }
           }
