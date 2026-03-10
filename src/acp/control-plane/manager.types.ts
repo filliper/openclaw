@@ -46,6 +46,8 @@ export type AcpInitializeSessionInput = {
   resumeSessionId?: string;
   cwd?: string;
   backendId?: string;
+  /** Per-agent env overrides forwarded to the runtime backend spawn. */
+  agentEnv?: Record<string, string>;
 };
 
 export type AcpTurnAttachment = {
