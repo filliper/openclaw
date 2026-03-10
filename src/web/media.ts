@@ -242,6 +242,14 @@ async function loadWebMediaInternal(
     sandboxValidated = false,
     readFile: readFileOverride,
   } = options;
+
+  // Check for #doc fragment to force document delivery mode
+  let forceAsDocument = false;
+  if (mediaUrl.includes("#doc")) {
+    forceAsDocument = true;
+    mediaUrl = mediaUrl.replace("#doc", "");
+  }
+
   // Strip MEDIA: prefix used by agent tools (e.g. TTS) to tag media paths.
   // Be lenient: LLM output may add extra whitespace (e.g. "  MEDIA :  /tmp/x.png").
   mediaUrl = mediaUrl.replace(/^\s*MEDIA\s*:\s*/i, "");
@@ -290,22 +298,31 @@ async function loadWebMediaInternal(
     // If caller explicitly provides maxBytes, trust it (for channels that handle large files).
     // Otherwise fall back to per-kind defaults.
     const cap = maxBytes !== undefined ? maxBytes : maxBytesForKind(params.kind ?? "document");
-    if (params.kind === "image") {
-      const isGif = params.contentType === "image/gif";
+    
+    // Force document mode if #doc fragment was present
+    let finalKind = params.kind;
+    let finalContentType = params.contentType;
+    if (forceAsDocument) {
+      finalKind = "document";
+      // Keep original content type for proper file handling
+    }
+    
+    if (finalKind === "image") {
+      const isGif = finalContentType === "image/gif";
       if (isGif || !optimizeImages) {
         if (params.buffer.length > cap) {
           throw new Error(formatCapLimit(isGif ? "GIF" : "Media", cap, params.buffer.length));
         }
         return {
           buffer: params.buffer,
-          contentType: params.contentType,
-          kind: params.kind,
+          contentType: finalContentType,
+          kind: finalKind,
           fileName: params.fileName,
         };
       }
       return {
         ...(await optimizeAndClampImage(params.buffer, cap, {
-          contentType: params.contentType,
+          contentType: finalContentType,
           fileName: params.fileName,
         })),
       };
@@ -315,8 +332,8 @@ async function loadWebMediaInternal(
     }
     return {
       buffer: params.buffer,
-      contentType: params.contentType ?? undefined,
-      kind: params.kind,
+      contentType: finalContentType ?? undefined,
+      kind: finalKind,
       fileName: params.fileName,
     };
   };
