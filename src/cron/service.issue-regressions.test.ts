@@ -4,6 +4,8 @@ import type { HeartbeatRunResult } from "../infra/heartbeat-wake.js";
 import {
   clearCommandLane,
   enqueueCommandInLane,
+  markGatewayDraining,
+  resetAllLanes,
   setCommandLaneConcurrency,
 } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
@@ -1602,6 +1604,122 @@ describe("Cron issue regressions", () => {
       "cron: queued manual run background execution failed",
     );
 
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+  });
+
+  it("clears reserved isolated manual runs when post-prepare enqueue is rejected", async () => {
+    vi.useRealTimers();
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+    setCommandLaneConcurrency(CommandLane.CronDispatch, 1);
+
+    const store = makeStorePath();
+    const dueAt = Date.parse("2026-02-06T10:05:03.500Z");
+    const job = createDueIsolatedJob({
+      id: "queued-isolated-drain-reject",
+      nowMs: dueAt,
+      nextRunAtMs: dueAt,
+    });
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    const dispatchLaneStarted = createDeferred<void>();
+    const releaseDispatchLane = createDeferred<void>();
+    void enqueueCommandInLane(CommandLane.CronDispatch, async () => {
+      dispatchLaneStarted.resolve();
+      await releaseDispatchLane.promise;
+    });
+    await dispatchLaneStarted.promise;
+
+    const log = createNoopLogger();
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log,
+      nowMs: () => dueAt,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: createDefaultIsolatedRunner(),
+    });
+
+    const result = await enqueueRun(state, job.id, "force");
+    expect(result).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+
+    markGatewayDraining();
+    releaseDispatchLane.resolve();
+
+    await vi.waitFor(() => {
+      const storedJob = state.store?.jobs.find((entry) => entry.id === job.id);
+      expect(storedJob?.state.runningAtMs).toBeUndefined();
+      expect(storedJob?.state.lastStatus).toBe("error");
+      expect(storedJob?.state.lastError).toContain("Gateway is draining");
+    });
+    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
+
+    resetAllLanes();
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+  });
+
+  it("clears reserved main-target manual runs when post-prepare enqueue is rejected", async () => {
+    vi.useRealTimers();
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+    setCommandLaneConcurrency(CommandLane.CronDispatch, 1);
+
+    const store = makeStorePath();
+    const dueAt = Date.parse("2026-02-06T10:05:03.750Z");
+    const job: CronJob = {
+      id: "queued-main-drain-reject",
+      name: "queued main drain reject",
+      enabled: true,
+      createdAtMs: dueAt,
+      updatedAtMs: dueAt,
+      schedule: { kind: "at", at: new Date(dueAt).toISOString() },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "systemEvent", text: "main" },
+      delivery: { mode: "none" },
+      state: { nextRunAtMs: dueAt },
+    };
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    const dispatchLaneStarted = createDeferred<void>();
+    const releaseDispatchLane = createDeferred<void>();
+    void enqueueCommandInLane(CommandLane.CronDispatch, async () => {
+      dispatchLaneStarted.resolve();
+      await releaseDispatchLane.promise;
+    });
+    await dispatchLaneStarted.promise;
+
+    const log = createNoopLogger();
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log,
+      nowMs: () => dueAt,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: createDefaultIsolatedRunner(),
+    });
+
+    const result = await enqueueRun(state, job.id, "force");
+    expect(result).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+
+    markGatewayDraining();
+    releaseDispatchLane.resolve();
+
+    await vi.waitFor(() => {
+      const storedJob = state.store?.jobs.find((entry) => entry.id === job.id);
+      expect(storedJob?.state.runningAtMs).toBeUndefined();
+      expect(storedJob?.state.lastStatus).toBe("error");
+      expect(storedJob?.state.lastError).toContain("Gateway is draining");
+    });
+    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
+
+    resetAllLanes();
     clearCommandLane(CommandLane.Cron);
     clearCommandLane(CommandLane.CronDispatch);
   });

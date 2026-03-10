@@ -1,4 +1,8 @@
-import { enqueueCommandInLane } from "../../process/command-queue.js";
+import {
+  CommandLaneClearedError,
+  enqueueCommandInLane,
+  GatewayDrainingError,
+} from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "../types.js";
 import { normalizeCronCreateDeliveryInput } from "./initial-delivery.js";
@@ -428,21 +432,14 @@ async function prepareManualRun(
   });
 }
 
-async function finishPreparedManualRun(
+async function finalizePreparedManualRun(
   state: CronServiceState,
   prepared: Extract<PreparedManualRun, { ran: true }>,
-  mode?: "due" | "force",
+  mode: "due" | "force" | undefined,
+  coreResult: Awaited<ReturnType<typeof executeJobCoreWithTimeout>>,
 ): Promise<void> {
-  const executionJob = prepared.executionJob;
   const startedAt = prepared.startedAt;
   const jobId = prepared.jobId;
-
-  let coreResult: Awaited<ReturnType<typeof executeJobCoreWithTimeout>>;
-  try {
-    coreResult = await executeJobCoreWithTimeout(state, executionJob);
-  } catch (err) {
-    coreResult = { status: "error", error: String(err) };
-  }
   const endedAt = state.deps.nowMs();
 
   await locked(state, async () => {
@@ -515,6 +512,39 @@ async function finishPreparedManualRun(
   });
 }
 
+async function finishPreparedManualRun(
+  state: CronServiceState,
+  prepared: Extract<PreparedManualRun, { ran: true }>,
+  mode?: "due" | "force",
+): Promise<void> {
+  const executionJob = prepared.executionJob;
+
+  let coreResult: Awaited<ReturnType<typeof executeJobCoreWithTimeout>>;
+  try {
+    coreResult = await executeJobCoreWithTimeout(state, executionJob);
+  } catch (err) {
+    coreResult = { status: "error", error: String(err) };
+  }
+  await finalizePreparedManualRun(state, prepared, mode, coreResult);
+}
+
+function isManualRunFollowupEnqueueError(err: unknown): boolean {
+  return err instanceof GatewayDrainingError || err instanceof CommandLaneClearedError;
+}
+
+async function failPreparedManualRunBeforeExecution(
+  state: CronServiceState,
+  prepared: Extract<PreparedManualRun, { ran: true }>,
+  mode: "due" | "force" | undefined,
+  err: unknown,
+): Promise<void> {
+  const error = err instanceof Error ? err.message : String(err);
+  await finalizePreparedManualRun(state, prepared, mode, {
+    status: "error",
+    error,
+  });
+}
+
 async function waitForManualRunCronLaneAdmission(
   state: CronServiceState,
   jobId: string,
@@ -569,14 +599,28 @@ export async function enqueueRun(state: CronServiceState, id: string, mode?: "du
         return prepared;
       }
       if (prepared.executionJob.sessionTarget === "isolated") {
-        await waitForManualRunCronLaneAdmission(state, id, runId);
+        try {
+          await waitForManualRunCronLaneAdmission(state, id, runId);
+        } catch (err) {
+          if (isManualRunFollowupEnqueueError(err)) {
+            await failPreparedManualRunBeforeExecution(state, prepared, mode, err);
+          }
+          throw err;
+        }
         await finishPreparedManualRun(state, prepared, mode);
         return { ok: true, ran: true } as const;
       }
-      return await enqueueCommandInLane(CommandLane.Cron, async () => {
-        await finishPreparedManualRun(state, prepared, mode);
-        return { ok: true, ran: true } as const;
-      });
+      try {
+        return await enqueueCommandInLane(CommandLane.Cron, async () => {
+          await finishPreparedManualRun(state, prepared, mode);
+          return { ok: true, ran: true } as const;
+        });
+      } catch (err) {
+        if (isManualRunFollowupEnqueueError(err)) {
+          await failPreparedManualRunBeforeExecution(state, prepared, mode, err);
+        }
+        throw err;
+      }
     },
     {
       warnAfterMs: 5_000,
