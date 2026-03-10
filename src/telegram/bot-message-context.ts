@@ -2,7 +2,6 @@ import { ensureConfiguredAcpRouteReady } from "../acp/persistent-bindings.route.
 import { resolveAckReaction } from "../agents/identity.js";
 import { shouldAckReaction as shouldAckReactionGate } from "../channels/ack-reactions.js";
 import { logInboundDrop } from "../channels/logging.js";
-
 import {
   createStatusReactionController,
   type StatusReactionController,
@@ -305,6 +304,7 @@ export const buildTelegramMessageContext = async ({
   if (!(await ensureConfiguredBindingReady())) {
     return null;
   }
+
   // ACK reactions
   const ackReaction = resolveAckReaction(cfg, route.agentId, {
     channel: "telegram",

@@ -703,6 +703,7 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
         const messageIdForHook = timestamp ? String(timestamp) : undefined;
         const ingestOriginatingTo =
           normalizeSignalMessagingTarget(`group:${groupId}`) ?? `group:${groupId}`;
+        const ingestSenderName = envelope.sourceName ?? senderDisplay;
         void runSilentMessageIngest({
           enabled: ingestEnabled,
           event: {
@@ -710,13 +711,14 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
             content: pendingBodyText,
             timestamp,
             metadata: {
-              to: groupId,
+              to: ingestOriginatingTo,
               provider: "signal",
               surface: "signal",
               messageId: messageIdForHook,
               originatingChannel: "signal",
               originatingTo: ingestOriginatingTo,
-              senderName: senderDisplay,
+              senderId: senderRecipient,
+              senderName: ingestSenderName,
             },
           },
           ctx: {

@@ -12,6 +12,32 @@ const DEFAULT_MAX_INFLIGHT = 64;
 const DEFAULT_MAX_GLOBAL_INFLIGHT = 256;
 const DEFAULT_CONTENT_MAX_LENGTH = 8192;
 
+function truncateUnicodeSafe(value: string, maxCodePoints: number): string {
+  if (maxCodePoints <= 0) {
+    return "";
+  }
+  const codePoints = Array.from(value);
+  if (codePoints.length <= maxCodePoints) {
+    return value;
+  }
+  return codePoints.slice(0, maxCodePoints).join("");
+}
+
+function sanitizeIngestContent(value: string, maxLength: number): string {
+  let stripped = "";
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    const isDisallowedC0 =
+      code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f);
+    const isDisallowedC1 = code >= 0x7f && code <= 0x9f;
+    if (isDisallowedC0 || isDisallowedC1) {
+      continue;
+    }
+    stripped += ch;
+  }
+  return truncateUnicodeSafe(stripped, maxLength);
+}
+
 function makeInflightKey(ctx: PluginHookMessageContext): InflightKey {
   return `${ctx.channelId}:${ctx.accountId ?? ""}:${ctx.conversationId}`;
 }
@@ -47,8 +73,9 @@ export async function runSilentMessageIngest(params: {
   if (!params.enabled) {
     return false;
   }
-  const content = sanitizeUserText(params.event.content, DEFAULT_CONTENT_MAX_LENGTH);
-  if (!content) {
+  const rawContent = params.event.content;
+  const content = sanitizeIngestContent(rawContent, DEFAULT_CONTENT_MAX_LENGTH);
+  if (!content.trim()) {
     return false;
   }
 
