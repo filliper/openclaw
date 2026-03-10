@@ -1,5 +1,5 @@
 import { normalizeProviderId } from "../../agents/model-selection.js";
-import type { MediaUnderstandingProvider } from "../types.js";
+import type { MediaUnderstandingProvider, MediaUnderstandingCapability } from "../types.js";
 import { anthropicProvider } from "./anthropic/index.js";
 import { deepgramProvider } from "./deepgram/index.js";
 import { googleProvider } from "./google/index.js";
@@ -31,13 +31,81 @@ export function normalizeMediaProviderId(id: string): string {
   return normalized;
 }
 
+function mapCapability(cap: string): MediaUnderstandingCapability | undefined {
+  if (cap === "audio") {
+    return "audio";
+  }
+  if (cap === "image") {
+    return "image";
+  }
+  if (cap === "video") {
+    return "video";
+  }
+  return undefined;
+}
+
+async function getPluginMediaProviderOverrides(): Promise<
+  Record<string, MediaUnderstandingProvider>
+> {
+  try {
+    const { requireActivePluginRegistry } = await import("../../plugins/runtime.js");
+    const registry = requireActivePluginRegistry();
+    const overrides: Record<string, MediaUnderstandingProvider> = {};
+
+    for (const entry of registry.mediaProviders) {
+      const p = entry.provider;
+      const capabilitiesList = p.capabilities;
+      const capabilities = capabilitiesList
+        ?.map(mapCapability)
+        .filter((c): c is MediaUnderstandingCapability => c !== undefined);
+      const hasMediaCapabilities = capabilities && capabilities.length > 0;
+
+      // Skip providers that only have non-media capabilities (e.g., TTS-only)
+      if (!hasMediaCapabilities) {
+        continue;
+      }
+
+      const normalizedId = normalizeMediaProviderId(p.id);
+      const provider: MediaUnderstandingProvider = {
+        id: normalizedId,
+        capabilities,
+        transcribeAudio: p.transcribeAudio as MediaUnderstandingProvider["transcribeAudio"],
+        describeImage: p.describeImage as MediaUnderstandingProvider["describeImage"],
+        describeVideo: p.describeVideo as MediaUnderstandingProvider["describeVideo"],
+        textToSpeech: p.textToSpeech as MediaUnderstandingProvider["textToSpeech"],
+      };
+      overrides[normalizedId] = provider;
+    }
+
+    return overrides;
+  } catch {
+    return {};
+  }
+}
+
+let cachedPluginOverrides: Record<string, MediaUnderstandingProvider> | null = null;
+let pluginOverridesPromise: Promise<Record<string, MediaUnderstandingProvider>> | null = null;
+
 export function buildMediaUnderstandingRegistry(
   overrides?: Record<string, MediaUnderstandingProvider>,
 ): Map<string, MediaUnderstandingProvider> {
+  // Sync path can only use pre-populated cache from async path.
+  // Dynamic imports don't work in sync functions, so plugin loading
+  // must happen via buildMediaUnderstandingRegistryAsync() first.
+
   const registry = new Map<string, MediaUnderstandingProvider>();
   for (const provider of PROVIDERS) {
     registry.set(normalizeMediaProviderId(provider.id), provider);
   }
+
+  if (cachedPluginOverrides) {
+    for (const [key, provider] of Object.entries(cachedPluginOverrides)) {
+      const normalizedKey = normalizeMediaProviderId(key);
+      // Allow plugin to override built-in by same ID
+      registry.set(normalizedKey, provider);
+    }
+  }
+
   if (overrides) {
     for (const [key, provider] of Object.entries(overrides)) {
       const normalizedKey = normalizeMediaProviderId(key);
@@ -53,6 +121,26 @@ export function buildMediaUnderstandingRegistry(
     }
   }
   return registry;
+}
+
+export async function buildMediaUnderstandingRegistryAsync(
+  overrides?: Record<string, MediaUnderstandingProvider>,
+): Promise<Map<string, MediaUnderstandingProvider>> {
+  if (!cachedPluginOverrides && !pluginOverridesPromise) {
+    pluginOverridesPromise = getPluginMediaProviderOverrides().then((overrides) => {
+      cachedPluginOverrides = overrides;
+      return overrides;
+    });
+  }
+
+  const pluginOverrides = await (pluginOverridesPromise ??
+    Promise.resolve(cachedPluginOverrides ?? {}));
+  return buildMediaUnderstandingRegistry({ ...pluginOverrides, ...overrides });
+}
+
+export function invalidateMediaProviderCache(): void {
+  cachedPluginOverrides = null;
+  pluginOverridesPromise = null;
 }
 
 export function getMediaUnderstandingProvider(

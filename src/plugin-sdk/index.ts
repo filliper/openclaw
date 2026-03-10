@@ -809,3 +809,17 @@ export type { ResolvedProviderAuth } from "../agents/model-auth.js";
 
 // Security utilities
 export { redactSensitiveText } from "../logging/redact.js";
+
+// Media provider plugin types
+export type {
+  MediaProviderCapability,
+  MediaProviderTranscribeAudioRequest,
+  MediaProviderTranscribeAudioResult,
+  MediaProviderDescribeImageRequest,
+  MediaProviderDescribeImageResult,
+  MediaProviderDescribeVideoRequest,
+  MediaProviderDescribeVideoResult,
+  MediaProviderTextToSpeechRequest,
+  MediaProviderTextToSpeechResult,
+  MediaProviderPlugin,
+} from "../plugins/types.js";

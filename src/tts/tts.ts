@@ -28,6 +28,10 @@ import { stripMarkdown } from "../line/markdown-to-line.js";
 import { isVoiceCompatibleAudio } from "../media/audio.js";
 import { CONFIG_DIR, resolveUserPath } from "../utils.js";
 import {
+  buildTtsProviderRegistryAsync as buildPluginTtsRegistry,
+  getTtsProvider as getPluginTtsProvider,
+} from "./providers.js";
+import {
   DEFAULT_OPENAI_BASE_URL,
   edgeTTS,
   elevenLabsTTS,
@@ -513,10 +517,7 @@ function resolveEdgeOutputFormat(config: ResolvedTtsConfig): string {
   return config.edge.outputFormat;
 }
 
-export function resolveTtsApiKey(
-  config: ResolvedTtsConfig,
-  provider: TtsProvider,
-): string | undefined {
+export function resolveTtsApiKey(config: ResolvedTtsConfig, provider: string): string | undefined {
   if (provider === "elevenlabs") {
     return config.elevenlabs.apiKey || process.env.ELEVENLABS_API_KEY || process.env.XI_API_KEY;
   }
@@ -539,7 +540,7 @@ export function isTtsProviderConfigured(config: ResolvedTtsConfig, provider: Tts
   return Boolean(resolveTtsApiKey(config, provider));
 }
 
-function formatTtsProviderError(provider: TtsProvider, err: unknown): string {
+function formatTtsProviderError(provider: string, err: unknown): string {
   const error = err instanceof Error ? err : new Error(String(err));
   if (error.name === "AbortError") {
     return `${provider}: request timed out`;
@@ -573,14 +574,70 @@ export async function textToSpeech(params: {
     };
   }
 
+  const pluginTtsRegistry = await buildPluginTtsRegistry();
   const userProvider = getTtsProvider(config, prefsPath);
   const overrideProvider = params.overrides?.provider;
-  const provider = overrideProvider ?? userProvider;
-  const providers = resolveTtsProviderOrder(provider);
+  const primaryProvider = overrideProvider ?? userProvider;
+
+  const builtinSet = new Set<string>(TTS_PROVIDERS);
+  const customPlugins: string[] = [];
+  for (const [, pluginProvider] of pluginTtsRegistry) {
+    if (pluginProvider.id !== primaryProvider && !builtinSet.has(pluginProvider.id)) {
+      customPlugins.push(pluginProvider.id);
+    }
+  }
+
+  const otherBuiltins = TTS_PROVIDERS.filter((p) => p !== primaryProvider);
+  const providerOrder = [primaryProvider, ...customPlugins, ...otherBuiltins];
 
   const errors: string[] = [];
 
-  for (const provider of providers) {
+  for (const provider of providerOrder) {
+    const pluginTtsProvider = getPluginTtsProvider(provider, pluginTtsRegistry);
+    if (pluginTtsProvider) {
+      const providerStart = Date.now();
+      try {
+        const apiKey = resolveTtsApiKey(config, provider) ?? "";
+        let model: string | undefined;
+        let voice: string | undefined;
+        let baseUrl: string | undefined;
+        if (provider === "openai") {
+          model = params.overrides?.openai?.model;
+          voice = params.overrides?.openai?.voice;
+          baseUrl = config.openai.baseUrl;
+        } else if (provider === "elevenlabs") {
+          model = params.overrides?.elevenlabs?.modelId;
+        }
+        const result = await pluginTtsProvider.textToSpeech({
+          text: params.text,
+          model,
+          voice,
+          apiKey,
+          baseUrl,
+          timeoutMs: config.timeoutMs,
+        });
+
+        const tempRoot = resolvePreferredOpenClawTmpDir();
+        mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+        const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
+        const mimeExt = result.mime.split("/")[1]?.split(";")[0] || "mp3";
+        const audioPath = path.join(tempDir, `voice-${Date.now()}.${mimeExt}`);
+        writeFileSync(audioPath, result.audio);
+        scheduleCleanup(tempDir);
+
+        return {
+          success: true,
+          audioPath,
+          latencyMs: Date.now() - providerStart,
+          provider,
+          outputFormat: result.mime,
+          voiceCompatible: isVoiceCompatibleAudio({ fileName: audioPath }),
+        };
+      } catch (err) {
+        errors.push(formatTtsProviderError(provider, err));
+        continue;
+      }
+    }
     const providerStart = Date.now();
     try {
       if (provider === "edge") {
@@ -737,12 +794,66 @@ export async function textToSpeechTelephony(params: {
     };
   }
 
+  const pluginTtsRegistry = await buildPluginTtsRegistry();
   const userProvider = getTtsProvider(config, prefsPath);
-  const providers = resolveTtsProviderOrder(userProvider);
+
+  const builtinSetTelephony = new Set<string>(TTS_PROVIDERS);
+  const customPluginsTelephony: string[] = [];
+  for (const [, pluginProvider] of pluginTtsRegistry) {
+    if (pluginProvider.id !== userProvider && !builtinSetTelephony.has(pluginProvider.id)) {
+      customPluginsTelephony.push(pluginProvider.id);
+    }
+  }
+
+  const otherBuiltinsTelephony = TTS_PROVIDERS.filter((p) => p !== userProvider);
+  const providers = [userProvider, ...customPluginsTelephony, ...otherBuiltinsTelephony];
 
   const errors: string[] = [];
 
   for (const provider of providers) {
+    const pluginTtsProvider = getPluginTtsProvider(provider, pluginTtsRegistry);
+    if (pluginTtsProvider) {
+      const providerStart = Date.now();
+      try {
+        const apiKey = resolveTtsApiKey(config, provider) ?? "";
+        let baseUrl: string | undefined;
+        if (provider === "openai") {
+          baseUrl = config.openai.baseUrl;
+        }
+        const result = await pluginTtsProvider.textToSpeech({
+          text: params.text,
+          apiKey,
+          baseUrl,
+          timeoutMs: config.timeoutMs,
+        });
+
+        if (!result.sampleRate) {
+          throw new Error("plugin TTS result missing required sampleRate for telephony");
+        }
+
+        // Telephony pipeline expects PCM format (audio/l16 or audio/raw)
+        const isPcm =
+          result.mime.startsWith("audio/l16") ||
+          result.mime === "audio/raw" ||
+          result.mime.startsWith("audio/pcm");
+        if (!isPcm) {
+          throw new Error(`plugin TTS result must be PCM format for telephony, got ${result.mime}`);
+        }
+
+        return {
+          success: true,
+          audioBuffer: result.audio,
+          outputFormat: result.mime,
+          sampleRate: result.sampleRate,
+          latencyMs: Date.now() - providerStart,
+          provider,
+        };
+      } catch (err) {
+        errors.push(formatTtsProviderError(provider, err));
+        continue;
+      }
+    }
+
     const providerStart = Date.now();
     try {
       if (provider === "edge") {
