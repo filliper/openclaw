@@ -699,7 +699,8 @@ export function formatAssistantErrorText(
   }
 
   if (isTimeoutErrorMessage(raw)) {
-    return "LLM request timed out.";
+    const context = opts?.provider && opts?.model ? ` (${opts.provider}/${opts.model})` : "";
+    return `LLM request timed out${context}.`;
   }
 
   if (isBillingErrorMessage(raw)) {
