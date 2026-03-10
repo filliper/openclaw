@@ -1642,11 +1642,16 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
     let lastSentText = "";
     let patchInterval: ReturnType<typeof setInterval> | null = null;
     let patchSending = false; // prevents concurrent network calls
-    // Resolved reply target for the streaming message — mirrors what the non-streaming
-    // deliver path computes via resolveMattermostReplyRootId. Defaults to threadRootId
-    // (for messages already in a thread) and updated to payload.replyToId on the first
-    // onPartialReply chunk so top-level replies are also threaded correctly.
-    let streamReplyToId: string | undefined = threadRootId;
+    // Resolved reply target for the streaming message — computed upfront the same way
+    // the non-streaming deliver path does it via resolveMattermostReplyRootId.
+    // For top-level inbound posts threadRootId is empty, so we fall back to
+    // payload.replyToId (the inbound message's reply target).
+    // NOTE: do NOT try to derive this from onPartialReply callbacks — those are invoked
+    // with only { text, mediaUrls } and carry no replyToId.
+    let streamReplyToId: string | undefined = resolveMattermostReplyRootId({
+      threadRootId,
+      replyToId: payload.replyToId,
+    });
     const STREAM_PATCH_INTERVAL_MS = 200;
 
     // Use the already-resolved baseUrl/botToken from the outer scope
@@ -1903,11 +1908,6 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             // so heading/paragraph formatting is always correct.
             onPartialReply: blockStreamingClient
               ? (payload: ReplyPayload) => {
-                  // Capture the resolved reply target on the first partial so streamed
-                  // posts land in the correct thread even for top-level inbound messages.
-                  if (!streamReplyToId && payload.replyToId) {
-                    streamReplyToId = payload.replyToId.trim() || undefined;
-                  }
                   const rawText = payload.text ?? "";
                   const fullText = core.channel.text.convertMarkdownTables(rawText, tableMode);
                   if (fullText) {
