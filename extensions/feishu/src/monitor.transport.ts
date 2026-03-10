@@ -165,6 +165,11 @@ export async function monitorWebhook({
     resolveReady = resolve;
     rejectReady = reject;
   });
+  // Mark the rejection as observed so that Node does not treat it as an
+  // unhandled rejection when no joiner is awaiting the promise (e.g. single-
+  // account EADDRINUSE or early abort).  Joiners still receive the rejection
+  // via their own `await existing.ready` inside a try/catch.
+  ready.catch(() => {});
 
   const entry: WebhookServerEntry = {
     server,
