@@ -15,7 +15,9 @@ import { resolveControlCommandGate } from "../channels/command-gating.js";
 import { formatLocationText, type NormalizedLocation } from "../channels/location.js";
 import { logInboundDrop } from "../channels/logging.js";
 import { resolveMentionGatingWithBypass } from "../channels/mention-gating.js";
+import { runSilentMessageIngest } from "../channels/silent-ingest.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveChannelGroupIngest } from "../config/group-policy.js";
 import type {
   TelegramDirectConfig,
   TelegramGroupConfig,
@@ -31,6 +33,8 @@ import type {
 } from "./bot-message-context.types.js";
 import {
   buildSenderLabel,
+  buildSenderName,
+  buildTelegramGroupFrom,
   buildTelegramGroupPeerId,
   expandTextLinks,
   extractTelegramLocation,
@@ -84,6 +88,7 @@ export async function resolveTelegramInboundBody(params: {
   senderUsername: string;
   resolvedThreadId?: number;
   routeAgentId?: string;
+  routeAccountId?: string;
   effectiveGroupAllow: NormalizedAllowFrom;
   effectiveDmAllow: NormalizedAllowFrom;
   groupConfig?: TelegramGroupConfig | TelegramDirectConfig;
@@ -105,6 +110,7 @@ export async function resolveTelegramInboundBody(params: {
     senderUsername,
     resolvedThreadId,
     routeAgentId,
+    routeAccountId,
     effectiveGroupAllow,
     effectiveDmAllow,
     groupConfig,
@@ -267,6 +273,44 @@ export async function resolveTelegramInboundBody(params: {
           }
         : null,
     });
+
+    // Silent ingest: run message_ingest hooks on non-mentioned group messages.
+    const baseIngestEnabled = resolveChannelGroupIngest({
+      cfg,
+      channel: "telegram",
+      groupId: String(chatId),
+      accountId: routeAccountId,
+    });
+    const ingestEnabled =
+      typeof topicConfig?.ingest === "boolean" ? topicConfig.ingest : baseIngestEnabled;
+    void runSilentMessageIngest({
+      enabled: ingestEnabled,
+      event: {
+        from: buildTelegramGroupFrom(chatId, resolvedThreadId),
+        content: bodyText,
+        timestamp: msg.date ? msg.date * 1000 : undefined,
+        metadata: {
+          to: `telegram:${chatId}`,
+          provider: "telegram",
+          surface: "telegram",
+          threadId: resolvedThreadId,
+          originatingChannel: "telegram",
+          originatingTo: `telegram:${chatId}`,
+          messageId: typeof msg.message_id === "number" ? String(msg.message_id) : undefined,
+          senderId: senderId || undefined,
+          senderName: buildSenderName(msg),
+          senderUsername,
+        },
+      },
+      ctx: {
+        channelId: "telegram",
+        accountId: routeAccountId,
+        conversationId: buildTelegramGroupPeerId(chatId, resolvedThreadId),
+      },
+      log: logVerbose,
+      logPrefix: "telegram",
+    });
+
     return null;
   }
 
