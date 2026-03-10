@@ -118,6 +118,8 @@ export type CronJobState = {
   /** Classified reason for the last error (when available). */
   lastErrorReason?: FailoverReason;
   lastDurationMs?: number;
+  /** Model that actually executed the last run (useful for detecting fallbacks). */
+  lastModel?: string;
   /** Number of consecutive execution errors (reset on success). Used for backoff. */
   consecutiveErrors?: number;
   /** Last failure alert timestamp (ms since epoch) for cooldown gating. */

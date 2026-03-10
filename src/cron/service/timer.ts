@@ -301,6 +301,7 @@ export function applyJobResult(
     delivered?: boolean;
     startedAt: number;
     endedAt: number;
+    model?: string;
   },
   opts?: {
     // Preserve recurring "every" anchors for manual force runs.
@@ -322,6 +323,7 @@ export function applyJobResult(
   job.state.lastRunStatus = result.status;
   job.state.lastStatus = result.status;
   job.state.lastDurationMs = Math.max(0, result.endedAt - result.startedAt);
+  job.state.lastModel = result.model;
   job.state.lastError = result.error;
   job.state.lastErrorReason =
     result.status === "error" && typeof result.error === "string"
@@ -494,6 +496,7 @@ function applyOutcomeToStoredJob(state: CronServiceState, result: TimedCronRunOu
     delivered: result.delivered,
     startedAt: result.startedAt,
     endedAt: result.endedAt,
+    model: result.model,
   });
 
   emitJobFinished(state, job, result, result.startedAt);
@@ -1190,6 +1193,7 @@ export async function executeJob(
     delivered: coreResult.delivered,
     startedAt,
     endedAt,
+    model: coreResult.model,
   });
 
   emitJobFinished(state, job, coreResult, startedAt);
