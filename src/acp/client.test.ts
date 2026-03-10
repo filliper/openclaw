@@ -110,6 +110,62 @@ describe("resolveAcpClientSpawnEnv", () => {
     expect(env.OPENCLAW_SHELL).toBe("acp-client");
     expect(env.OPENAI_API_KEY).toBeUndefined();
   });
+
+  it("applies agentEnv overrides on top of baseEnv", () => {
+    const authTokenEnv = envVar("ANTHROPIC", "AUTH", "TOKEN");
+    const env = resolveAcpClientSpawnEnv(
+      {
+        PATH: "/usr/bin",
+        [authTokenEnv]: "stale-global-token", // pragma: allowlist secret
+      },
+      {
+        agentEnv: {
+          [authTokenEnv]: "agent-specific-token", // pragma: allowlist secret
+        },
+      },
+    );
+
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-specific-token");
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.OPENCLAW_SHELL).toBe("acp-client");
+  });
+
+  it("agentEnv overrides are applied after stripKeys", () => {
+    const authTokenEnv = envVar("ANTHROPIC", "AUTH", "TOKEN");
+    const openAiApiKeyEnv = envVar("OPENAI", "API", "KEY");
+    const env = resolveAcpClientSpawnEnv(
+      {
+        [authTokenEnv]: "polluted-token", // pragma: allowlist secret
+        [openAiApiKeyEnv]: "skill-leaked-key", // pragma: allowlist secret
+      },
+      {
+        stripKeys: new Set([authTokenEnv, openAiApiKeyEnv]),
+        agentEnv: {
+          [authTokenEnv]: "correct-agent-token", // pragma: allowlist secret
+        },
+      },
+    );
+
+    // agentEnv re-applies the correct token after strip
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("correct-agent-token");
+    // stripped key without agentEnv override stays removed
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("agentEnv can introduce new env vars not in baseEnv", () => {
+    const baseUrlEnv = envVar("ANTHROPIC", "BASE", "URL");
+    const env = resolveAcpClientSpawnEnv(
+      { PATH: "/usr/bin" },
+      {
+        agentEnv: {
+          [baseUrlEnv]: "https://custom.api.example.com", // pragma: allowlist secret
+        },
+      },
+    );
+
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://custom.api.example.com");
+    expect(env.PATH).toBe("/usr/bin");
+  });
 });
 
 describe("resolveAcpClientSpawnInvocation", () => {

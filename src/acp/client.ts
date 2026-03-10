@@ -323,6 +323,8 @@ export type AcpClientOptions = {
   serverArgs?: string[];
   serverVerbose?: boolean;
   verbose?: boolean;
+  /** Per-agent env overrides applied to the spawned CC process. */
+  agentEnv?: Record<string, string>;
 };
 
 export type AcpClientHandle = {
@@ -348,12 +350,21 @@ function buildServerArgs(opts: AcpClientOptions): string[] {
 
 export function resolveAcpClientSpawnEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
-  options?: { stripKeys?: ReadonlySet<string> },
+  options?: {
+    stripKeys?: ReadonlySet<string>;
+    /** Per-agent env overrides (e.g. ANTHROPIC_AUTH_TOKEN) applied after strip. */
+    agentEnv?: Record<string, string>;
+  },
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv };
   if (options?.stripKeys) {
     for (const key of options.stripKeys) {
       delete env[key];
+    }
+  }
+  if (options?.agentEnv) {
+    for (const [key, value] of Object.entries(options.agentEnv)) {
+      env[key] = value;
     }
   }
   env.OPENCLAW_SHELL = "acp-client";
@@ -461,6 +472,7 @@ export async function createAcpClient(opts: AcpClientOptions = {}): Promise<AcpC
   const { getActiveSkillEnvKeys } = await import("../agents/skills/env-overrides.runtime.js");
   const spawnEnv = resolveAcpClientSpawnEnv(process.env, {
     stripKeys: getActiveSkillEnvKeys(),
+    agentEnv: opts.agentEnv,
   });
   const spawnInvocation = resolveAcpClientSpawnInvocation(
     { serverCommand, serverArgs: effectiveArgs },
