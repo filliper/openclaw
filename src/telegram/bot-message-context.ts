@@ -249,7 +249,10 @@ export const buildTelegramMessageContext = async ({
   // set dmScope: "main" intentionally (or uses conversationBindings / ACP
   // bindings), we respect that choice.
   // See: https://github.com/openclaw/openclaw/issues/41165
-  const dmScopeExplicit = cfg.session?.dmScope != null;
+  // Check freshCfg (not cfg) for consistency — route selection above uses
+  // freshCfg via resolveTelegramConversationRoute, so the explicitness check
+  // must read from the same source to avoid divergence at runtime.
+  const dmScopeExplicit = freshCfg.session?.dmScope != null;
   if (
     !isGroup &&
     !isNamedAccountFallback &&
