@@ -1,7 +1,13 @@
 import fs from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import type { HeartbeatRunResult } from "../infra/heartbeat-wake.js";
-import { clearCommandLane, setCommandLaneConcurrency } from "../process/command-queue.js";
+import {
+  clearCommandLane,
+  GatewayDrainingError,
+  markGatewayDraining,
+  resetAllLanes,
+  setCommandLaneConcurrency,
+} from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import * as schedule from "./schedule.js";
 import {
@@ -1568,7 +1574,7 @@ describe("Cron issue regressions", () => {
     clearCommandLane(CommandLane.Cron);
   });
 
-  it("logs unexpected queued manual run background failures once", async () => {
+  it("surfaces persist failures from enqueueRun immediately (not as silent background error)", async () => {
     vi.useRealTimers();
     clearCommandLane(CommandLane.Cron);
     setCommandLaneConcurrency(CommandLane.Cron, 1);
@@ -1585,15 +1591,232 @@ describe("Cron issue regressions", () => {
       jobs: [job],
     });
 
-    const result = await enqueueRun(state, job.id, "force");
-    expect(result).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+    // With the fix, prepareManualRun reserves the job and persists under lock
+    // before enqueuing. A broken store path causes the persist to fail
+    // synchronously (during prepareManualRun), so enqueueRun itself throws
+    // rather than returning { enqueued: true } and silently failing later.
+    await expect(enqueueRun(state, job.id, "force")).rejects.toThrow();
 
-    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
-    expect(log.error.mock.calls[0]?.[1]).toBe(
+    clearCommandLane(CommandLane.Cron);
+  });
+
+  it("#42152: enqueueRun reserves job before enqueuing to prevent TOCTOU race", async () => {
+    vi.useRealTimers();
+    clearCommandLane(CommandLane.Cron);
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+
+    const store = makeStorePath();
+    const dueAt = Date.parse("2026-02-06T10:05:04.000Z");
+    const job = createDueIsolatedJob({ id: "toctou-job", nowMs: dueAt, nextRunAtMs: dueAt });
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    let now = dueAt;
+    let runCount = 0;
+    const runIsolatedAgentJob = vi.fn(async () => {
+      runCount += 1;
+      now += 10;
+      return { status: "ok" as const, summary: "done" };
+    });
+
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log: createNoopLogger(),
+      nowMs: () => now,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob,
+    });
+
+    // enqueueRun must reserve (set runningAtMs) under lock before returning.
+    // Simulate a concurrent timer tick that would previously steal the job
+    // between the old `inspectManualRunDisposition` check and the background
+    // `prepareManualRun` call.
+    const ackPromise = enqueueRun(state, job.id, "force");
+
+    // Attempt to run the same job concurrently via the timer path.
+    // With the fix: the job is already reserved, so the timer run is a no-op.
+    // Without the fix: the timer could steal the reservation and enqueueRun's
+    // background task would find runningAtMs set and silently skip.
+    const timerRun = run(state, job.id, "force");
+
+    const [ack, timerResult] = await Promise.all([ackPromise, timerRun]);
+
+    expect(ack).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+    // One of enqueueRun or run reserved first; the other gets "already-running".
+    // Either way, exactly one execution must complete.
+    await vi.waitFor(
+      () => {
+        expect(runCount).toBe(1);
+      },
+      { timeout: 2_000 },
+    );
+    expect(timerResult).toMatchObject({ ok: true });
+
+    clearCommandLane(CommandLane.Cron);
+  });
+
+  it("enqueueRun releases runningAtMs reservation when lane rejects (e.g. GatewayDrainingError)", async () => {
+    vi.useRealTimers();
+    resetAllLanes();
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+
+    const store = makeStorePath();
+    const dueAt = Date.parse("2026-02-06T10:05:05.000Z");
+    const job = createDueIsolatedJob({ id: "drain-release", nowMs: dueAt, nextRunAtMs: dueAt });
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    const log = createNoopLogger();
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log,
+      nowMs: () => dueAt,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: vi.fn().mockResolvedValue({ status: "ok", summary: "ok" }),
+    });
+
+    // Mark gateway as draining so enqueueCommandInLane immediately rejects
+    // with GatewayDrainingError. The reservation (runningAtMs) set by
+    // prepareManualRun must be released so the job is not stuck.
+    markGatewayDraining();
+
+    const ack = await enqueueRun(state, job.id, "force");
+    expect(ack).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+
+    // Wait for the async release to propagate
+    await vi.waitFor(
+      () => {
+        const stored = state.store?.jobs.find((j) => j.id === job.id);
+        expect(stored?.state.runningAtMs).toBeUndefined();
+      },
+      { timeout: 2_000 },
+    );
+
+    // Error should be logged
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.stringContaining(GatewayDrainingError.name) }),
       "cron: queued manual run background execution failed",
     );
 
-    clearCommandLane(CommandLane.Cron);
+    resetAllLanes();
+  });
+
+  it("enqueueRun skips execution when stale-marker clears runningAtMs before the lane drains", async () => {
+    vi.useRealTimers();
+    resetAllLanes();
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+
+    const store = makeStorePath();
+    const dueAt = Date.parse("2026-02-06T10:05:06.000Z");
+    const job = createDueIsolatedJob({ id: "stale-skip", nowMs: dueAt, nextRunAtMs: dueAt });
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    const log = createNoopLogger();
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log,
+      nowMs: () => dueAt,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: vi.fn().mockResolvedValue({ status: "ok", summary: "ok" }),
+    });
+
+    const ack = await enqueueRun(state, job.id, "force");
+    expect(ack).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+
+    // Simulate stale-marker maintenance clearing runningAtMs while lane is backed up.
+    // This is what happens if the Cron lane is backed up for >STUCK_RUN_MS (2 hours).
+    // Directly mutate in-memory store (same as what recomputeJobTickState does).
+    const stored = state.store?.jobs.find((j) => j.id === job.id);
+    if (stored) {
+      stored.state.runningAtMs = undefined;
+    }
+
+    await vi.waitFor(
+      () => {
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ jobId: job.id }),
+          "cron: queued manual run skipped — reservation was cleared before execution (stale-marker or concurrent run)",
+        );
+      },
+      { timeout: 2_000 },
+    );
+
+    // No duplicate execution — runIsolatedAgentJob was never reached.
+    expect(state.store?.jobs.find((j) => j.id === job.id)?.state.lastStatus).toBeUndefined();
+
+    resetAllLanes();
+  });
+
+  it("enqueueRun refreshes runningAtMs at execution start to prevent STUCK_RUN_MS expiry mid-run", async () => {
+    vi.useRealTimers();
+    resetAllLanes();
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+
+    const store = makeStorePath();
+    // Simulate queue entry at T=0 and execution start well after T=0.
+    const enqueueAt = Date.parse("2026-02-06T10:05:07.000Z");
+    // Execution starts 90 minutes later — close to STUCK_RUN_MS (2h).
+    const executionStartAt = enqueueAt + 90 * 60 * 1000;
+    let nowMs = enqueueAt;
+
+    const job = createDueIsolatedJob({
+      id: "refresh-running-at",
+      nowMs: enqueueAt,
+      nextRunAtMs: enqueueAt,
+    });
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    // Block the agent job so we can observe runningAtMs before it completes.
+    const runStarted = createDeferred<void>();
+    const runUnblock = createDeferred<void>();
+    const runIsolatedAgentJob = vi.fn(async () => {
+      runStarted.resolve();
+      await runUnblock.promise;
+      return { status: "ok" as const, summary: "ok" };
+    });
+
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log: createNoopLogger(),
+      nowMs: () => nowMs,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob,
+    });
+
+    const ack = await enqueueRun(state, job.id, "force");
+    expect(ack).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+
+    // The reservation was stamped at enqueueAt.
+    expect(state.store?.jobs.find((j) => j.id === job.id)?.state.runningAtMs).toBe(enqueueAt);
+
+    // Advance clock to simulate queue wait before the callback begins.
+    nowMs = executionStartAt;
+
+    // Wait until runIsolatedAgentJob is called (execution started).
+    await runStarted.promise;
+
+    // runningAtMs must have been refreshed to executionStartAt so that
+    // STUCK_RUN_MS is measured from actual execution, not queue-entry time.
+    // Reload from disk to verify the persisted value.
+    await fs.readFile(store.storePath, "utf-8").then((raw) => {
+      const persisted = JSON.parse(raw) as { jobs: { id: string; state: { runningAtMs?: number } }[] };
+      const persistedJob = persisted.jobs.find((j) => j.id === job.id);
+      expect(persistedJob?.state.runningAtMs).toBe(executionStartAt);
+    });
+
+    runUnblock.resolve();
+    await vi.waitFor(
+      () => expect(state.store?.jobs.find((j) => j.id === job.id)?.state.lastStatus).toBe("ok"),
+      { timeout: 2_000 },
+    );
+
+    resetAllLanes();
   });
 
   // Regression: isolated cron runs must not abort at 1/3 of configured timeoutSeconds.

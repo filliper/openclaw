@@ -356,36 +356,7 @@ type PreparedManualRun =
     }
   | { ok: false };
 
-type ManualRunDisposition =
-  | Extract<PreparedManualRun, { ran: false }>
-  | { ok: true; runnable: true };
-
 let nextManualRunId = 1;
-
-async function inspectManualRunDisposition(
-  state: CronServiceState,
-  id: string,
-  mode?: "due" | "force",
-): Promise<ManualRunDisposition | { ok: false }> {
-  return await locked(state, async () => {
-    warnIfDisabled(state, "run");
-    await ensureLoaded(state, { skipRecompute: true });
-    // Normalize job tick state (clears stale runningAtMs markers) before
-    // checking if already running, so a stale marker from a crashed Phase-1
-    // persist does not block manual triggers for up to STUCK_RUN_MS (#17554).
-    recomputeNextRunsForMaintenance(state);
-    const job = findJobOrThrow(state, id);
-    if (typeof job.state.runningAtMs === "number") {
-      return { ok: true, ran: false, reason: "already-running" as const };
-    }
-    const now = state.deps.nowMs();
-    const due = isJobDue(job, now, { forced: mode === "force" });
-    if (!due) {
-      return { ok: true, ran: false, reason: "not-due" as const };
-    }
-    return { ok: true, runnable: true } as const;
-  });
-}
 
 async function prepareManualRun(
   state: CronServiceState,
@@ -524,24 +495,82 @@ export async function run(state: CronServiceState, id: string, mode?: "due" | "f
   return { ok: true, ran: true } as const;
 }
 
+async function releaseManualRunReservation(
+  state: CronServiceState,
+  jobId: string,
+  runId: string,
+  err: unknown,
+): Promise<void> {
+  // Clear the runningAtMs reservation set by prepareManualRun so the job does
+  // not remain stuck as "already-running" until the stale-marker maintenance
+  // window fires. Best-effort: if this persist also fails, stale-marker
+  // cleanup will still recover the job after STUCK_RUN_MS.
+  try {
+    await locked(state, async () => {
+      await ensureLoaded(state, { skipRecompute: true });
+      const job = state.store?.jobs.find((j) => j.id === jobId);
+      if (job && typeof job.state.runningAtMs === "number") {
+        job.state.runningAtMs = undefined;
+        await persist(state);
+      }
+    });
+  } catch (releaseErr) {
+    state.deps.log.warn(
+      { jobId, runId, releaseErr: String(releaseErr) },
+      "cron: failed to release runningAtMs after enqueue failure (stale-marker cleanup will recover)",
+    );
+  }
+  state.deps.log.error(
+    { jobId, runId, err: String(err) },
+    "cron: queued manual run background execution failed",
+  );
+}
+
 export async function enqueueRun(state: CronServiceState, id: string, mode?: "due" | "force") {
-  const disposition = await inspectManualRunDisposition(state, id, mode);
-  if (!disposition.ok || !("runnable" in disposition && disposition.runnable)) {
-    return disposition;
+  // Reserve the job under lock *before* enqueuing so the job cannot be stolen
+  // by a concurrent timer tick between the eligibility check and the background
+  // execution (TOCTOU race that caused #42152: enqueueRun returned
+  // { enqueued: true } but the job never executed because prepareManualRun
+  // found runningAtMs already set when the background task finally ran).
+  const prepared = await prepareManualRun(state, id, mode);
+  if (!prepared.ok || !prepared.ran) {
+    return prepared;
   }
 
   const runId = `manual:${id}:${state.deps.nowMs()}:${nextManualRunId++}`;
   void enqueueCommandInLane(
     CommandLane.Cron,
     async () => {
-      const result = await run(state, id, mode);
-      if (result.ok && "ran" in result && !result.ran) {
-        state.deps.log.info(
-          { jobId: id, runId, reason: result.reason },
-          "cron: queued manual run skipped before execution",
+      // At execution start: verify the reservation is still ours, then
+      // refresh runningAtMs to now so the STUCK_RUN_MS clock starts from
+      // actual execution rather than queue-entry time. This prevents two
+      // failure modes:
+      //   (a) Stale-marker clears runningAtMs while the task is still in the
+      //       queue (queue wait > STUCK_RUN_MS), allowing the timer to pick
+      //       up the job before this callback runs → duplicate execution.
+      //   (b) Stale-marker clears runningAtMs mid-execution (queue wait +
+      //       run time > STUCK_RUN_MS), allowing the timer to fire a second
+      //       concurrent run while finishPreparedManualRun is still running.
+      const refreshedPrepared = await locked(state, async () => {
+        await ensureLoaded(state, { skipRecompute: true });
+        const current = state.store?.jobs.find((j) => j.id === id);
+        if (current?.state.runningAtMs !== prepared.startedAt) {
+          return null;
+        }
+        // Re-stamp so STUCK_RUN_MS is measured from actual execution start.
+        const executionStartedAt = state.deps.nowMs();
+        current.state.runningAtMs = executionStartedAt;
+        await persist(state);
+        return { ...prepared, startedAt: executionStartedAt } as const;
+      });
+      if (!refreshedPrepared) {
+        state.deps.log.warn(
+          { jobId: id, runId },
+          "cron: queued manual run skipped — reservation was cleared before execution (stale-marker or concurrent run)",
         );
+        return;
       }
-      return result;
+      await finishPreparedManualRun(state, refreshedPrepared, mode);
     },
     {
       warnAfterMs: 5_000,
@@ -553,10 +582,10 @@ export async function enqueueRun(state: CronServiceState, id: string, mode?: "du
       },
     },
   ).catch((err) => {
-    state.deps.log.error(
-      { jobId: id, runId, err: String(err) },
-      "cron: queued manual run background execution failed",
-    );
+    // Release the runningAtMs reservation so the job is not stuck as
+    // "already-running" for the full STUCK_RUN_MS window when the lane
+    // rejects the task (e.g. GatewayDrainingError on restart).
+    void releaseManualRunReservation(state, id, runId, err);
   });
   return { ok: true, enqueued: true, runId } as const;
 }
