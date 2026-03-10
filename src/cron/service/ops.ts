@@ -362,7 +362,7 @@ type PreparedManualRun =
 
 type ManualRunDisposition =
   | Extract<PreparedManualRun, { ran: false }>
-  | { ok: true; runnable: true };
+  | { ok: true; runnable: true; sessionTarget: CronJob["sessionTarget"] };
 
 let nextManualRunId = 1;
 
@@ -387,7 +387,7 @@ async function inspectManualRunDisposition(
     if (!due) {
       return { ok: true, ran: false, reason: "not-due" as const };
     }
-    return { ok: true, runnable: true } as const;
+    return { ok: true, runnable: true, sessionTarget: job.sessionTarget } as const;
   });
 }
 
@@ -532,18 +532,7 @@ function isManualRunFollowupEnqueueError(err: unknown): boolean {
   return err instanceof GatewayDrainingError || err instanceof CommandLaneClearedError;
 }
 
-async function failPreparedManualRunBeforeExecution(
-  state: CronServiceState,
-  prepared: Extract<PreparedManualRun, { ran: true }>,
-  mode: "due" | "force" | undefined,
-  err: unknown,
-): Promise<void> {
-  const error = err instanceof Error ? err.message : String(err);
-  await finalizePreparedManualRun(state, prepared, mode, {
-    status: "error",
-    error,
-  });
-}
+
 
 async function waitForManualRunCronLaneAdmission(
   state: CronServiceState,
@@ -588,36 +577,61 @@ export async function enqueueRun(state: CronServiceState, id: string, mode?: "du
   void enqueueCommandInLane(
     manualDispatchLane,
     async () => {
-      const prepared = await prepareManualRun(state, id, mode);
-      if (!prepared.ok || !prepared.ran) {
-        if (prepared.ok && "ran" in prepared && !prepared.ran) {
-          state.deps.log.info(
-            { jobId: id, runId, reason: prepared.reason },
-            "cron: queued manual run skipped before execution",
-          );
-        }
-        return prepared;
-      }
-      if (prepared.executionJob.sessionTarget === "isolated") {
+      if (disposition.sessionTarget === "isolated") {
         try {
           await waitForManualRunCronLaneAdmission(state, id, runId);
         } catch (err) {
           if (isManualRunFollowupEnqueueError(err)) {
-            await failPreparedManualRunBeforeExecution(state, prepared, mode, err);
+            // Because we haven't prepared the run yet, we don't need a formal failure finalization,
+            // but we should log that it failed to acquire an admission slot.
+            state.deps.log.error(
+              { jobId: id, runId, err: String(err) },
+              "cron: queued manual isolated run failed to acquire cron lane admission",
+            );
           }
           throw err;
         }
+
+        // Now that we have the slot, lock the job.
+        const prepared = await prepareManualRun(state, id, mode);
+        if (!prepared.ok || !prepared.ran) {
+          if (prepared.ok && "ran" in prepared && !prepared.ran) {
+            state.deps.log.info(
+              { jobId: id, runId, reason: prepared.reason },
+              "cron: queued manual run skipped before execution (isolated)",
+            );
+          }
+          return prepared;
+        }
+
         await finishPreparedManualRun(state, prepared, mode);
         return { ok: true, ran: true } as const;
       }
+
       try {
         return await enqueueCommandInLane(CommandLane.Cron, async () => {
+          // Now that we have the slot, lock the job.
+          const prepared = await prepareManualRun(state, id, mode);
+          if (!prepared.ok || !prepared.ran) {
+            if (prepared.ok && "ran" in prepared && !prepared.ran) {
+              state.deps.log.info(
+                { jobId: id, runId, reason: prepared.reason },
+                "cron: queued manual run skipped before execution",
+              );
+            }
+            return prepared;
+          }
+
           await finishPreparedManualRun(state, prepared, mode);
           return { ok: true, ran: true } as const;
         });
       } catch (err) {
         if (isManualRunFollowupEnqueueError(err)) {
-          await failPreparedManualRunBeforeExecution(state, prepared, mode, err);
+          // Again, no formal preparation to clean up, just log.
+          state.deps.log.error(
+            { jobId: id, runId, err: String(err) },
+            "cron: queued manual run failed to acquire cron lane payload slot",
+          );
         }
         throw err;
       }
