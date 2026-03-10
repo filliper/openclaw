@@ -242,6 +242,9 @@ async function assertSecurePath(params: {
       throw new Error(`${params.label} is outside trustedDirs: ${effectivePath}`);
     }
   }
+  if (params.allowInsecurePath) {
+    return effectivePath;
+  }
 
   const perms = await inspectPathPermissions(effectivePath);
   if (!perms.ok) {
@@ -254,9 +257,6 @@ async function assertSecurePath(params: {
   }
 
   if (process.platform === "win32" && perms.source === "unknown") {
-    if (params.allowInsecurePath) {
-      return effectivePath;
-    }
     throw new Error(
       `${params.label} ACL verification unavailable on Windows for ${effectivePath}. Set allowInsecurePath=true for this provider to bypass this specific check when the path is trusted.`,
     );
