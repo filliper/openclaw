@@ -21,7 +21,11 @@ import {
   resolveStorePath,
   type SessionEntry,
 } from "../../config/sessions.js";
-import { normalizeAgentId, normalizeMainKey, toAgentStoreSessionKey } from "../../routing/session-key.js";
+import {
+  normalizeAgentId,
+  normalizeMainKey,
+  toAgentStoreSessionKey,
+} from "../../routing/session-key.js";
 
 export type SessionResolution = {
   sessionId: string;
