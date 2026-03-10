@@ -38,7 +38,7 @@ def maybe_decode_hex_keychain_secret(value)
 
     # `security find-generic-password -w` can return hex when the stored secret
     # includes newlines/non-printable bytes (like PEM files).
-    if decoded.include?("BEGIN PRIVATE KEY") || decoded.include?("END PRIVATE KEY")
+    if decoded.include?("BEGIN PRIVATE KEY") || decoded.include?("END PRIVATE KEY") # pragma: allowlist secret
       UI.message("Decoded hex-encoded ASC key content from Keychain.")
       return decoded
     end
@@ -116,7 +116,7 @@ platform :ios do
           "Missing App Store Connect API key. Set APP_STORE_CONNECT_API_KEY_PATH (json), ASC_KEY_PATH (p8), or ASC_KEY_ID/ASC_ISSUER_ID with ASC_KEY_CONTENT (or Keychain via ASC_KEYCHAIN_SERVICE/ASC_KEYCHAIN_ACCOUNT)."
         ) if [key_id, issuer_id, key_content].any? { |v| !env_present?(v) }
 
-        is_base64 = key_content.include?("BEGIN PRIVATE KEY") ? false : true
+        is_base64 = key_content.include?("BEGIN PRIVATE KEY") ? false : true # pragma: allowlist secret
 
         api_key = app_store_connect_api_key(
           key_id: key_id,
