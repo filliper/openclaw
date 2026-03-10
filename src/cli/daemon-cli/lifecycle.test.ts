@@ -20,6 +20,7 @@ type RestartPostCheckContext = {
 type RestartParams = {
   opts?: { json?: boolean };
   postRestartCheck?: (ctx: RestartPostCheckContext) => Promise<void>;
+  onBeforeRestartAction?: () => Promise<void> | void;
 };
 
 const service = {
@@ -48,6 +49,13 @@ const probeGateway = vi.fn<
 >();
 const isRestartEnabled = vi.fn<(config?: { commands?: unknown }) => boolean>(() => true);
 const loadConfig = vi.fn(() => ({}));
+const resolveMainSessionKeyFromConfig = vi.fn(() => "agent:main:main");
+const extractDeliveryInfo = vi.fn(() => ({
+  deliveryContext: { channel: "telegram", to: "7174833131" },
+  threadId: undefined,
+}));
+const writeRestartSentinel = vi.fn();
+const transitionRestartSentinelStatus = vi.fn();
 
 vi.mock("node:fs", () => ({
   default: {
@@ -57,6 +65,17 @@ vi.mock("node:fs", () => ({
 
 vi.mock("node:child_process", () => ({
   spawnSync: (...args: unknown[]) => mockSpawnSync(...args),
+}));
+
+vi.mock("../../config/sessions.js", () => ({
+  resolveMainSessionKeyFromConfig,
+  extractDeliveryInfo,
+}));
+
+vi.mock("../../infra/restart-sentinel.js", () => ({
+  formatDoctorNonInteractiveHint: () => "doctor-hint",
+  writeRestartSentinel,
+  transitionRestartSentinelStatus,
 }));
 
 vi.mock("../../config/config.js", () => ({
@@ -127,6 +146,8 @@ describe("runDaemonRestart health checks", () => {
     loadConfig.mockReset();
     mockReadFileSync.mockReset();
     mockSpawnSync.mockReset();
+    writeRestartSentinel.mockReset();
+    transitionRestartSentinelStatus.mockReset();
 
     service.readCommand.mockResolvedValue({
       programArguments: ["openclaw", "gateway", "--port", "18789"],
@@ -139,6 +160,7 @@ describe("runDaemonRestart health checks", () => {
         err.hints = hints;
         throw err;
       };
+      await params.onBeforeRestartAction?.();
       await params.postRestartCheck?.({
         json: Boolean(params.opts?.json),
         stdout: process.stdout,
@@ -202,6 +224,79 @@ describe("runDaemonRestart health checks", () => {
     expect(terminateStaleGatewayPids).toHaveBeenCalledWith([1993]);
     expect(service.restart).toHaveBeenCalledTimes(1);
     expect(waitForGatewayHealthyRestart).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps restart sentinel non-final until the restart succeeds", async () => {
+    waitForGatewayHealthyRestart.mockResolvedValue({
+      healthy: true,
+      staleGatewayPids: [],
+      runtime: { status: "running" },
+      portUsage: { port: 18789, status: "busy", listeners: [], hints: [] },
+    });
+
+    const { runDaemonRestart } = await import("./lifecycle.js");
+    const result = await runDaemonRestart({ json: true, notify: true, note: "hello" });
+
+    expect(result).toBe(true);
+    expect(writeRestartSentinel).toHaveBeenCalledTimes(1);
+    expect(writeRestartSentinel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "restart",
+        status: "pending",
+        message: "hello",
+      }),
+    );
+    expect(transitionRestartSentinelStatus).toHaveBeenNthCalledWith(
+      1,
+      "in-progress",
+      expect.objectContaining({
+        allowedCurrentStatuses: ["pending"],
+      }),
+    );
+    expect(transitionRestartSentinelStatus).toHaveBeenNthCalledWith(
+      2,
+      "ok",
+      expect.objectContaining({
+        allowedCurrentStatuses: ["in-progress"],
+      }),
+    );
+
+    // Ensure the final ok transition happens after the service restart flow completes.
+    const restartOrder = runServiceRestart.mock.invocationCallOrder[0];
+    const finalizeOrder = transitionRestartSentinelStatus.mock.invocationCallOrder[1];
+    expect(finalizeOrder).toBeGreaterThan(restartOrder);
+  });
+  it("does not finalize restart sentinel when restart action never begins", async () => {
+    let sentinelStatus: "pending" | "in-progress" | "ok" = "pending";
+    writeRestartSentinel.mockImplementation(async () => {
+      sentinelStatus = "pending";
+    });
+    transitionRestartSentinelStatus.mockImplementation(
+      async (
+        next: "pending" | "in-progress" | "ok",
+        options?: { allowedCurrentStatuses?: string[] },
+      ) => {
+        const allowed = options?.allowedCurrentStatuses ?? [];
+        if (allowed.length > 0 && !allowed.includes(sentinelStatus)) {
+          throw new Error(`invalid transition ${sentinelStatus} -> ${next}`);
+        }
+        sentinelStatus = next;
+      },
+    );
+    runServiceRestart.mockImplementation(async () => true);
+
+    const { runDaemonRestart } = await import("./lifecycle.js");
+    const result = await runDaemonRestart({ json: true, notify: true });
+
+    expect(result).toBe(true);
+    expect(sentinelStatus).toBe("pending");
+    expect(transitionRestartSentinelStatus).toHaveBeenCalledTimes(1);
+    expect(transitionRestartSentinelStatus).toHaveBeenCalledWith(
+      "ok",
+      expect.objectContaining({
+        allowedCurrentStatuses: ["in-progress"],
+      }),
+    );
   });
 
   it("fails restart when gateway remains unhealthy", async () => {

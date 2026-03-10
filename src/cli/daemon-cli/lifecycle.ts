@@ -2,10 +2,17 @@ import { spawnSync } from "node:child_process";
 import fsSync from "node:fs";
 import { isRestartEnabled } from "../../config/commands.js";
 import { readBestEffortConfig, resolveGatewayPort } from "../../config/config.js";
+import { extractDeliveryInfo, resolveMainSessionKeyFromConfig } from "../../config/sessions.js";
 import { parseCmdScriptCommandLine } from "../../daemon/cmd-argv.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { probeGateway } from "../../gateway/probe.js";
 import { isGatewayArgv, parseProcCmdline } from "../../infra/gateway-process-argv.js";
+import {
+  formatDoctorNonInteractiveHint,
+  type RestartSentinelPayload,
+  transitionRestartSentinelStatus,
+  writeRestartSentinel,
+} from "../../infra/restart-sentinel.js";
 import { findGatewayPidsOnPortSync } from "../../infra/restart.js";
 import { defaultRuntime } from "../../runtime.js";
 import { theme } from "../../terminal/theme.js";
@@ -162,7 +169,10 @@ async function stopGatewayWithoutServiceManager(port: number) {
   };
 }
 
-async function restartGatewayWithoutServiceManager(port: number) {
+async function restartGatewayWithoutServiceManager(
+  port: number,
+  onBeforeRestartAction?: () => Promise<void> | void,
+) {
   await assertUnmanagedGatewayRestartEnabled(port);
   const pids = resolveVerifiedGatewayListenerPids(port);
   if (pids.length === 0) {
@@ -173,6 +183,7 @@ async function restartGatewayWithoutServiceManager(port: number) {
       `multiple gateway processes are listening on port ${port}: ${formatGatewayPidList(pids)}; use "openclaw gateway status --deep" before retrying restart`,
     );
   }
+  await onBeforeRestartAction?.();
   signalGatewayPid(pids[0], "SIGUSR1");
   return {
     result: "restarted" as const,
@@ -221,20 +232,78 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
   const json = Boolean(opts.json);
   const service = resolveGatewayService();
   let restartedWithoutServiceManager = false;
+  const shouldNotify = Boolean(opts.notify);
   const restartPort = await resolveGatewayLifecyclePort(service).catch(() =>
     resolveGatewayPortFallback(),
   );
   const restartWaitMs = POST_RESTART_HEALTH_ATTEMPTS * POST_RESTART_HEALTH_DELAY_MS;
   const restartWaitSeconds = Math.round(restartWaitMs / 1000);
 
-  return await runServiceRestart({
+  let restartSentinelWritable = false;
+  let restartSentinelMarkedInProgress = false;
+  const markRestartSentinelInProgress = async () => {
+    if (!restartSentinelWritable || restartSentinelMarkedInProgress) {
+      return;
+    }
+    restartSentinelMarkedInProgress = true;
+    try {
+      await transitionRestartSentinelStatus("in-progress", {
+        allowedCurrentStatuses: ["pending"],
+      });
+    } catch {
+      // best-effort
+    }
+  };
+
+  if (shouldNotify) {
+    const mainSessionKey = resolveMainSessionKeyFromConfig();
+    const { deliveryContext, threadId } = extractDeliveryInfo(mainSessionKey);
+    const hasRoute = Boolean(deliveryContext?.channel && deliveryContext?.to);
+    if (!hasRoute) {
+      if (!json) {
+        defaultRuntime.log(
+          theme.warn(
+            `--notify requested but main session (${mainSessionKey}) has no delivery target; skipping post-restart notification.`,
+          ),
+        );
+      }
+    } else {
+      const note = typeof opts.note === "string" && opts.note.trim() ? opts.note.trim() : undefined;
+      const payload: RestartSentinelPayload = {
+        kind: "restart",
+        status: "pending",
+        ts: Date.now(),
+        sessionKey: mainSessionKey,
+        deliveryContext,
+        threadId,
+        message: note,
+        doctorHint: formatDoctorNonInteractiveHint(),
+        stats: {
+          mode: "gateway.restart",
+          reason: note ?? "cli --notify",
+        },
+      };
+      try {
+        await writeRestartSentinel(payload);
+        restartSentinelWritable = true;
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  const restarted = await runServiceRestart({
     serviceNoun: "Gateway",
     service,
     renderStartHints: renderGatewayServiceStartHints,
     opts,
     checkTokenDrift: true,
-    onNotLoaded: async () => {
-      const handled = await restartGatewayWithoutServiceManager(restartPort);
+    onBeforeRestartAction: markRestartSentinelInProgress,
+    onNotLoaded: async (ctx) => {
+      const handled = await restartGatewayWithoutServiceManager(
+        restartPort,
+        ctx?.onBeforeRestartAction,
+      );
       if (handled) {
         restartedWithoutServiceManager = true;
       }
@@ -328,4 +397,16 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
       ]);
     },
   });
+
+  if (shouldNotify && restarted) {
+    try {
+      await transitionRestartSentinelStatus("ok", {
+        allowedCurrentStatuses: ["in-progress"],
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
+  return restarted;
 }
