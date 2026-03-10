@@ -48,6 +48,16 @@ describe("buildRescueProfileEnv", () => {
     expect(env.OPENCLAW_SYSTEMD_UNIT).toBeUndefined();
     expect(env.OPENCLAW_WINDOWS_TASK_NAME).toBeUndefined();
   });
+
+  it("preserves gateway port overrides for the target profile env", () => {
+    const env = buildRescueProfileEnv("work", {
+      HOME: "/home/tester",
+      OPENCLAW_PROFILE: "work",
+      OPENCLAW_GATEWAY_PORT: "29999",
+    });
+
+    expect(env.OPENCLAW_GATEWAY_PORT).toBe("29999");
+  });
 });
 
 describe("canEnableRescueWatchdog", () => {
