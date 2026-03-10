@@ -129,6 +129,8 @@ export function stripInboundMetadata(text: string): string {
   const result: string[] = [];
   let inMetaBlock = false;
   let inFencedJson = false;
+  let strippedMetadata = false; // Track if we actually stripped any metadata
+  let hasNewFormatMarker = false; // Track if metadata contains _sep marker
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -148,6 +150,7 @@ export function stripInboundMetadata(text: string): string {
       }
       inMetaBlock = true;
       inFencedJson = false;
+      strippedMetadata = true; // We're entering a metadata block
       continue;
     }
 
@@ -157,6 +160,10 @@ export function stripInboundMetadata(text: string): string {
         continue;
       }
       if (inFencedJson) {
+        // Check for the new format marker in the JSON content
+        if (line.includes('"_sep"')) {
+          hasNewFormatMarker = true;
+        }
         if (line.trim() === "```") {
           inMetaBlock = false;
           inFencedJson = false;
@@ -172,6 +179,33 @@ export function stripInboundMetadata(text: string): string {
     }
 
     result.push(line);
+  }
+
+  // Only strip the separator if we actually stripped metadata AND the metadata
+  // contains the new format marker (_sep). This prevents corrupting legacy user
+  // content that happens to start with the separator pattern.
+  if (strippedMetadata && hasNewFormatMarker) {
+    // Skip any leading blank lines before checking for separator.
+    // The metadata blocks end with a blank line, so after stripping metadata
+    // we may have leading blanks before the "---" separator.
+    let separatorIndex = 0;
+    while (separatorIndex < result.length && result[separatorIndex]?.trim() === "") {
+      separatorIndex++;
+    }
+
+    // Strip the user message separator if present.
+    // Only strip when we see the full pattern: "---" followed by "**User Message:**"
+    if (
+      separatorIndex < result.length &&
+      result[separatorIndex]?.trim() === "---" &&
+      result[separatorIndex + 1]?.trim() === "**User Message:**"
+    ) {
+      // Remove the separator lines and any leading blank lines
+      result.splice(0, separatorIndex + 2);
+      while (result.length > 0 && result[0]?.trim() === "") {
+        result.shift();
+      }
+    }
   }
 
   return result.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
@@ -197,6 +231,8 @@ export function stripLeadingInboundMetadata(text: string): string {
     return strippedNoLeading.join("\n");
   }
 
+  let hasNewFormatMarker = false; // Track if metadata contains _sep marker
+
   while (index < lines.length) {
     const line = lines[index];
     if (!isInboundMetaSentinelLine(line)) {
@@ -207,6 +243,10 @@ export function stripLeadingInboundMetadata(text: string): string {
     if (index < lines.length && lines[index].trim() === "```json") {
       index++;
       while (index < lines.length && lines[index].trim() !== "```") {
+        // Check for the new format marker in the JSON content
+        if (lines[index].includes('"_sep"')) {
+          hasNewFormatMarker = true;
+        }
         index++;
       }
       if (index < lines.length && lines[index].trim() === "```") {
@@ -218,6 +258,23 @@ export function stripLeadingInboundMetadata(text: string): string {
 
     while (index < lines.length && lines[index].trim() === "") {
       index++;
+    }
+  }
+
+  // Only strip the separator if the metadata contains the new format marker.
+  // This prevents corrupting legacy user content that happens to start with the separator pattern.
+  if (hasNewFormatMarker) {
+    // Strip the user message separator if present.
+    // Only strip when we see the full pattern: "---" followed by "**User Message:**"
+    if (
+      index < lines.length &&
+      lines[index]?.trim() === "---" &&
+      lines[index + 1]?.trim() === "**User Message:**"
+    ) {
+      index += 2;
+      while (index < lines.length && lines[index]?.trim() === "") {
+        index++;
+      }
     }
   }
 

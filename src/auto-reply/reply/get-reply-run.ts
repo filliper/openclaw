@@ -291,7 +291,7 @@ export async function runPreparedReply(
     isNewSession &&
     ((baseBodyTrimmedRaw.length === 0 && rawBodyTrimmed.length > 0) || isBareNewOrReset);
   const baseBodyFinal = isBareSessionReset ? buildBareSessionResetPrompt(cfg) : baseBody;
-  const inboundUserContext = buildInboundUserContextPrefix(
+  const inboundUserContextResult = buildInboundUserContextPrefix(
     isNewSession
       ? {
           ...sessionCtx,
@@ -303,7 +303,9 @@ export async function runPreparedReply(
   );
   const baseBodyForPrompt = isBareSessionReset
     ? baseBodyFinal
-    : [inboundUserContext, baseBodyFinal].filter(Boolean).join("\n\n");
+    : inboundUserContextResult.hasSeparatorMarker
+      ? `${inboundUserContextResult.text}\n\n---\n**User Message:**\n${baseBodyFinal}`
+      : baseBodyFinal;
   const baseBodyTrimmed = baseBodyForPrompt.trim();
   const hasMediaAttachment = Boolean(
     sessionCtx.MediaPath || (sessionCtx.MediaPaths && sessionCtx.MediaPaths.length > 0),
