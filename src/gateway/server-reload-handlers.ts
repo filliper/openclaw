@@ -131,6 +131,25 @@ export function createGatewayReloadHandlers(params: {
       }
     }
 
+    if (plan.resetSessionModels) {
+      try {
+        const { resetSessionModelsForAllAgents } = await import("../config/sessions/store.js");
+        await resetSessionModelsForAllAgents(nextConfig);
+        params.logReload.info(`reset session models completed`);
+      } catch (err) {
+        params.logReload.error(`reset session models failed: ${String(err)}`);
+      }
+    }
+
+    if (plan.resetSessionModels) {
+      try {
+        await resetSessionModelsForAllAgents(nextConfig);
+        params.logReload.info("reset session models completed");
+      } catch (err) {
+        params.logReload.error(`reset session models failed: ${String(err)}`);
+      }
+    }
+
     setCommandLaneConcurrency(CommandLane.Cron, nextConfig.cron?.maxConcurrentRuns ?? 1);
     setCommandLaneConcurrency(CommandLane.Main, resolveAgentMaxConcurrent(nextConfig));
     setCommandLaneConcurrency(CommandLane.Subagent, resolveSubagentMaxConcurrent(nextConfig));

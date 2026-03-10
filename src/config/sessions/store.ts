@@ -881,3 +881,57 @@ export async function updateLastRoute(params: {
     });
   });
 }
+
+export async function clearSessionModelFields(storePath: string): Promise<number> {
+  return await updateSessionStore(storePath, (store) => {
+    let clearedCount = 0;
+    const now = Date.now();
+
+    for (const [key, entry] of Object.entries(store)) {
+      if (!entry) {
+        continue;
+      }
+
+      // Skip sessions with explicit model/provider overrides - these are user-set and should persist
+      if (entry.modelOverride?.trim() || entry.providerOverride?.trim()) {
+        continue;
+      }
+
+      // Clear stale runtime model fields
+      const hadModel = typeof entry.model === "string" && entry.model.trim().length > 0;
+      const hadProvider =
+        typeof entry.modelProvider === "string" && entry.modelProvider.trim().length > 0;
+      const hadContextTokens = typeof entry.contextTokens === "number";
+
+      if (hadModel || hadProvider || hadContextTokens) {
+        const next = { ...entry };
+        delete next.model;
+        delete next.modelProvider;
+        delete next.contextTokens;
+        next.updatedAt = now;
+        store[key] = next;
+        clearedCount++;
+      }
+    }
+
+    log.info(`clearSessionModelFields completed`, { clearedCount, storePath });
+    return clearedCount;
+  });
+}
+
+export async function resetSessionModelsForAllAgents(
+  cfg: import("../../gateway/session-utils.js").OpenClawConfig,
+): Promise<void> {
+  const { listAgentsForGateway } = await import("../../gateway/session-utils.js");
+  const { resolveStorePath } = await import("./paths.js");
+  const agents = listAgentsForGateway(cfg).agents;
+
+  let totalCleared = 0;
+  for (const agent of agents) {
+    const storePath = resolveStorePath(cfg.session?.store, { agentId: agent.id });
+    const cleared = await clearSessionModelFields(storePath);
+    totalCleared += cleared;
+  }
+
+  log.info(`resetSessionModelsForAllAgents completed`, { agentCount: agents.length, totalCleared });
+}
