@@ -89,9 +89,10 @@ let pluginOverridesPromise: Promise<Record<string, MediaUnderstandingProvider>> 
 export function buildMediaUnderstandingRegistry(
   overrides?: Record<string, MediaUnderstandingProvider>,
 ): Map<string, MediaUnderstandingProvider> {
-  // If cache exists, use it. Otherwise populate synchronously.
+  // If cache exists, use it. Otherwise try to populate synchronously.
   if (!cachedPluginOverrides) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { requireActivePluginRegistry } = require("../../plugins/runtime.js");
       const registry = requireActivePluginRegistry();
       const pluginOverrides: Record<string, MediaUnderstandingProvider> = {};
@@ -124,6 +125,10 @@ export function buildMediaUnderstandingRegistry(
         pluginOverrides[normalizedId] = provider;
       }
       cachedPluginOverrides = pluginOverrides;
+      // Set promise so async path knows cache is populated
+      if (!pluginOverridesPromise) {
+        pluginOverridesPromise = Promise.resolve(cachedPluginOverrides);
+      }
     } catch {
       // Plugins not available
     }
@@ -137,9 +142,8 @@ export function buildMediaUnderstandingRegistry(
   if (cachedPluginOverrides) {
     for (const [key, provider] of Object.entries(cachedPluginOverrides)) {
       const normalizedKey = normalizeMediaProviderId(key);
-      if (!registry.has(normalizedKey)) {
-        registry.set(normalizedKey, provider);
-      }
+      // Allow plugin to override built-in by same ID
+      registry.set(normalizedKey, provider);
     }
   }
 
@@ -170,7 +174,8 @@ export async function buildMediaUnderstandingRegistryAsync(
     });
   }
 
-  const pluginOverrides = await pluginOverridesPromise;
+  const pluginOverrides = await (pluginOverridesPromise ??
+    Promise.resolve(cachedPluginOverrides ?? {}));
   return buildMediaUnderstandingRegistry({ ...pluginOverrides, ...overrides });
 }
 

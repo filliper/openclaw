@@ -74,7 +74,8 @@ export async function buildTtsProviderRegistryAsync(
     });
   }
 
-  const pluginOverrides = await pluginOverridesPromise;
+  const pluginOverrides = await (pluginOverridesPromise ??
+    Promise.resolve(cachedPluginOverrides ?? {}));
   return buildTtsProviderRegistry({ ...pluginOverrides, ...overrides });
 }
 
