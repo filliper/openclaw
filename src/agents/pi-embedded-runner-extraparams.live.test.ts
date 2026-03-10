@@ -172,7 +172,7 @@ describeGeminiLive("pi embedded extra params (gemini live)", () => {
       oneByOneRedPngBase64,
       includeImage: true,
       prompt: "What color is this image? Reply with one word.",
-      onPayload: (payload) => {
+      onPayload: (payload, _model) => {
         capturedPayload = payload;
       },
     });
