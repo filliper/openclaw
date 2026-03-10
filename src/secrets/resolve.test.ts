@@ -40,6 +40,7 @@ describe("secret ref resolver", () => {
     command: string;
     passEnv?: string[];
     jsonOnly?: boolean;
+    allowInsecurePath?: boolean;
     allowSymlinkCommand?: boolean;
     trustedDirs?: string[];
     args?: string[];
