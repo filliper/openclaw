@@ -22,7 +22,7 @@ import {
   logMessageQueued,
   logSessionStateChange,
 } from "../../logging/diagnostic.js";
-import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { getGlobalHookRunner, getGlobalPluginRegistry } from "../../plugins/hook-runner-global.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
@@ -357,6 +357,61 @@ export async function dispatchReplyFromConfig(params: {
     });
     if (acpDispatch) {
       return acpDispatch;
+    }
+
+    // Run registered dispatch interceptors before starting the Agent.
+    // Interceptors can handle the message entirely (e.g. content filtering,
+    // rate limiting, access control) — when intercepted, the Agent never starts.
+    const pluginRegistry = getGlobalPluginRegistry();
+    if (pluginRegistry && pluginRegistry.dispatchInterceptors.length > 0) {
+      for (const interceptor of pluginRegistry.dispatchInterceptors) {
+        const body =
+          typeof ctx.Body === "string"
+            ? ctx.Body
+            : typeof ctx.RawBody === "string"
+              ? ctx.RawBody
+              : "";
+        const { intercepted } = await interceptor.intercept(
+          body,
+          {
+            sessionKey: ctx.SessionKey,
+            channelId: ctx.Surface ?? ctx.Provider ?? undefined,
+            userId: ctx.From ?? undefined,
+          },
+          {
+            sendBlock: (message: string) => {
+              const payload: ReplyPayload = { text: message };
+              if (shouldRouteToOriginating && originatingChannel && originatingTo) {
+                fireAndForgetHook(
+                  sendPayloadAsync(payload),
+                  "dispatch-from-config: interceptor route-reply failed",
+                );
+              } else {
+                dispatcher.sendFinalReply(payload);
+              }
+            },
+            sendStreamChunk: (text: string) => {
+              const payload: ReplyPayload = { text };
+              if (shouldRouteToOriginating) {
+                fireAndForgetHook(
+                  sendPayloadAsync(payload),
+                  "dispatch-from-config: interceptor stream route-reply failed",
+                );
+              } else {
+                dispatcher.sendBlockReply(payload);
+              }
+            },
+            sendStreamDone: () => {
+              // No-op: streaming completion is signaled by the intercepted return value.
+            },
+          },
+        );
+        if (intercepted) {
+          recordProcessed("completed", { reason: "dispatch_interceptor" });
+          markIdle("message_completed");
+          return { queuedFinal: true, counts: dispatcher.getQueuedCounts() };
+        }
+      }
     }
 
     // Track accumulated block text for TTS generation after streaming completes.
