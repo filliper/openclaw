@@ -568,10 +568,8 @@ async function surfaceManualRunEnqueueFailure(
     }
 
     job.state.runningAtMs = undefined;
-    job.state.lastRunAtMs = startedAt;
     job.state.lastRunStatus = "error";
     job.state.lastStatus = "error";
-    job.state.lastDurationMs = Math.max(0, endedAt - startedAt);
     job.state.lastError = errMessage;
     job.state.lastErrorReason = undefined;
     job.state.lastDeliveryStatus = "not-delivered";
@@ -584,7 +582,7 @@ async function surfaceManualRunEnqueueFailure(
       status: "error",
       error: errMessage,
       runAtMs: startedAt,
-      durationMs: job.state.lastDurationMs,
+      durationMs: 0,
       nextRunAtMs: job.state.nextRunAtMs,
       deliveryStatus: job.state.lastDeliveryStatus,
       deliveryError: job.state.lastDeliveryError,
