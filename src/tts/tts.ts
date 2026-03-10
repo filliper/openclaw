@@ -600,9 +600,11 @@ export async function textToSpeech(params: {
         const apiKey = resolveTtsApiKey(config, provider) ?? "";
         let model: string | undefined;
         let voice: string | undefined;
+        let baseUrl: string | undefined;
         if (provider === "openai") {
           model = params.overrides?.openai?.model;
           voice = params.overrides?.openai?.voice;
+          baseUrl = config.openai.baseUrl;
         } else if (provider === "elevenlabs") {
           model = params.overrides?.elevenlabs?.modelId;
         }
@@ -611,6 +613,7 @@ export async function textToSpeech(params: {
           model,
           voice,
           apiKey,
+          baseUrl,
           timeoutMs: config.timeoutMs,
         });
 
@@ -813,11 +816,20 @@ export async function textToSpeechTelephony(params: {
       const providerStart = Date.now();
       try {
         const apiKey = resolveTtsApiKey(config, provider) ?? "";
+        let baseUrl: string | undefined;
+        if (provider === "openai") {
+          baseUrl = config.openai.baseUrl;
+        }
         const result = await pluginTtsProvider.textToSpeech({
           text: params.text,
           apiKey,
+          baseUrl,
           timeoutMs: config.timeoutMs,
         });
+
+        if (!result.sampleRate) {
+          throw new Error("plugin TTS result missing required sampleRate for telephony");
+        }
 
         return {
           success: true,
