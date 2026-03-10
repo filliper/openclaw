@@ -58,11 +58,17 @@ async function getPluginMediaProviderOverrides(): Promise<
       const capabilities = capabilitiesList
         ?.map(mapCapability)
         .filter((c): c is MediaUnderstandingCapability => c !== undefined);
-      const hasCapabilities = capabilities && capabilities.length > 0;
+      const hasMediaCapabilities = capabilities && capabilities.length > 0;
+
+      // Skip providers that only have non-media capabilities (e.g., TTS-only)
+      if (!hasMediaCapabilities) {
+        continue;
+      }
+
       const normalizedId = normalizeMediaProviderId(p.id);
       const provider: MediaUnderstandingProvider = {
         id: normalizedId,
-        capabilities: hasCapabilities ? capabilities : undefined,
+        capabilities,
         transcribeAudio: p.transcribeAudio as MediaUnderstandingProvider["transcribeAudio"],
         describeImage: p.describeImage as MediaUnderstandingProvider["describeImage"],
         describeVideo: p.describeVideo as MediaUnderstandingProvider["describeVideo"],
@@ -83,7 +89,8 @@ let pluginOverridesPromise: Promise<Record<string, MediaUnderstandingProvider>> 
 export function buildMediaUnderstandingRegistry(
   overrides?: Record<string, MediaUnderstandingProvider>,
 ): Map<string, MediaUnderstandingProvider> {
-  if (!cachedPluginOverrides && !pluginOverridesPromise) {
+  // If cache exists, use it. Otherwise populate synchronously.
+  if (!cachedPluginOverrides) {
     try {
       const { requireActivePluginRegistry } = require("../../plugins/runtime.js");
       const registry = requireActivePluginRegistry();
@@ -98,11 +105,17 @@ export function buildMediaUnderstandingRegistry(
             (c: MediaUnderstandingCapability | undefined): c is MediaUnderstandingCapability =>
               c !== undefined,
           );
-        const hasCapabilities = capabilities && capabilities.length > 0;
+        const hasMediaCapabilities = capabilities && capabilities.length > 0;
+
+        // Skip providers that only have non-media capabilities (e.g., TTS-only)
+        if (!hasMediaCapabilities) {
+          continue;
+        }
+
         const normalizedId = normalizeMediaProviderId(p.id);
         const provider: MediaUnderstandingProvider = {
           id: normalizedId,
-          capabilities: hasCapabilities ? capabilities : undefined,
+          capabilities,
           transcribeAudio: p.transcribeAudio as MediaUnderstandingProvider["transcribeAudio"],
           describeImage: p.describeImage as MediaUnderstandingProvider["describeImage"],
           describeVideo: p.describeVideo as MediaUnderstandingProvider["describeVideo"],

@@ -670,9 +670,9 @@ api.registerMediaProvider({
     // req.apiKey: string
     // req.baseUrl?: string
     // req.timeoutMs: number
-    // typeof fetch
+    // req.fetchFn?: typeof fetch
 
-    req.fetchFn?: // Return audio buffer and MIME type
+    // Return audio buffer and MIME type
     return {
       audio: Buffer.from(/* audio data */),
       mime: "audio/mp3",
@@ -735,6 +735,7 @@ Notes:
 - Providers are tried in this order: user's configured provider → other plugin providers → built-in providers.
 - For TTS, return `sampleRate` in the result if your provider will be used for telephony (voice calls).
 - The `apiKey`, `baseUrl`, and other fields come from the user's `tools.media.*` config.
+- For custom providers (not openai/elevenlabs), `apiKey` may be empty — plugins should get credentials from environment variables or their own configuration.
 
 ### Register a messaging channel
 
