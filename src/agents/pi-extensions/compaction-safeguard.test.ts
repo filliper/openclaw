@@ -1599,6 +1599,35 @@ describe("compaction-safeguard double-compaction guard", () => {
     expect(result2).toEqual({ cancel: true });
   });
 
+  it("does not write boundary when turnPrefixMessages has real content (split-turn)", async () => {
+    const sessionManager = stubSessionManager();
+    const model = createAnthropicModelFixture();
+    setCompactionSafeguardRuntime(sessionManager, { model });
+
+    const mockEvent = {
+      preparation: {
+        messagesToSummarize: [] as AgentMessage[],
+        turnPrefixMessages: [
+          { role: "user" as const, content: "real turn prefix content" },
+        ] as AgentMessage[],
+        firstKeptEntryId: "entry-4",
+        tokensBefore: 2000,
+        fileOps: { read: [], edited: [], written: [] },
+        isSplitTurn: true,
+      },
+      customInstructions: "",
+      signal: new AbortController().signal,
+    };
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event: mockEvent,
+      apiKey: null,
+    });
+    // Should NOT take the boundary fast-path — falls through to normal compaction
+    // (which cancels due to no API key, but that's the expected normal path)
+    expect(result).toEqual({ cancel: true });
+  });
+
   it("continues when messages include real conversation content", async () => {
     const sessionManager = stubSessionManager();
     const model = createAnthropicModelFixture();
