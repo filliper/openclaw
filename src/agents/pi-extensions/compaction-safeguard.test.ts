@@ -1545,6 +1545,59 @@ describe("compaction-safeguard double-compaction guard", () => {
     expect(result).toEqual({ cancel: true });
     expect(getApiKeyMock).toHaveBeenCalled();
   });
+
+  it("treats tool results as real conversation only when linked to a meaningful user ask", async () => {
+    expect(
+      __testing.isRealConversationMessage(
+        {
+          role: "toolResult",
+          toolCallId: "t1",
+          toolName: "exec",
+          content: [{ type: "text", text: "done" }],
+        } as AgentMessage,
+        [
+          { role: "user", content: "HEARTBEAT_OK" } as AgentMessage,
+          {
+            role: "toolResult",
+            toolCallId: "t1",
+            toolName: "exec",
+            content: [{ type: "text", text: "done" }],
+          } as AgentMessage,
+        ],
+        1,
+      ),
+    ).toBe(false);
+
+    expect(
+      __testing.isRealConversationMessage(
+        {
+          role: "toolResult",
+          toolCallId: "t2",
+          toolName: "exec",
+          content: [{ type: "text", text: "done" }],
+        } as AgentMessage,
+        [
+          { role: "user", content: "please inspect the repo" } as AgentMessage,
+          {
+            role: "toolResult",
+            toolCallId: "t2",
+            toolName: "exec",
+            content: [{ type: "text", text: "done" }],
+          } as AgentMessage,
+        ],
+        1,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat assistant-only tool calls as meaningful conversation", () => {
+    expect(
+      __testing.hasMeaningfulConversationContent({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+      } as AgentMessage),
+    ).toBe(false);
+  });
 });
 
 async function expectWorkspaceSummaryEmptyForAgentsAlias(
