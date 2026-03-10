@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { onSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 
 const {
   hookRunner,
@@ -401,6 +402,26 @@ describe("compactEmbeddedPiSessionDirect hooks", () => {
     });
   });
 
+  it("emits a transcript update after successful compaction", async () => {
+    const listener = vi.fn();
+    const cleanup = onSessionTranscriptUpdate(listener);
+
+    try {
+      const result = await compactEmbeddedPiSessionDirect({
+        sessionId: "session-1",
+        sessionKey: "agent:main:session-1",
+        sessionFile: "  /tmp/session.jsonl  ",
+        workspaceDir: "/tmp",
+        customInstructions: "focus on decisions",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith({ sessionFile: "/tmp/session.jsonl" });
+    } finally {
+      cleanup();
+    }
+  });
   it("registers the Ollama api provider before compaction", async () => {
     resolveModelMock.mockReturnValue({
       model: {
