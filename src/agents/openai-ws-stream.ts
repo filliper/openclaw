@@ -32,6 +32,8 @@ import type {
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai";
+import type { AssistantMessagePhase } from "./assistant-output.js";
+import { normalizeAssistantMessagePhase } from "./assistant-output.js";
 import {
   OpenAIWebSocketManager,
   type ContentPart,
@@ -107,6 +109,46 @@ function toNonEmptyString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readAssistantTextPhase(block: unknown) {
+  if (!block || typeof block !== "object") {
+    return null;
+  }
+  return normalizeAssistantMessagePhase((block as { phase?: unknown }).phase);
+}
+
+function buildAssistantTextSignature(
+  itemId: string,
+  phase?: AssistantMessagePhase | null,
+  contentIndex = 0,
+): string {
+  const signature: { v: 1; id: string; phase?: AssistantMessagePhase } = {
+    v: 1,
+    id: contentIndex === 0 ? itemId : `${itemId}:${contentIndex}`,
+  };
+  if (phase) {
+    signature.phase = phase;
+  }
+  return JSON.stringify(signature);
+}
+
+function buildAssistantTextBlock(params: {
+  itemId: string;
+  text: string;
+  phase?: AssistantMessagePhase | null;
+  contentIndex?: number;
+}): TextContent {
+  return {
+    type: "text",
+    text: params.text,
+    textSignature: buildAssistantTextSignature(
+      params.itemId,
+      params.phase,
+      params.contentIndex ?? 0,
+    ),
+    ...(params.phase ? { phase: params.phase } : {}),
+  } as TextContent;
 }
 
 /** Convert pi-ai content (string | ContentPart[]) to plain text. */
@@ -195,8 +237,21 @@ export function convertMessagesToInputItems(messages: Message[]): InputItem[] {
     if (m.role === "assistant") {
       const content = m.content;
       if (Array.isArray(content)) {
-        // Collect text blocks and tool calls separately
-        const textParts: string[] = [];
+        const textGroups: Array<{ phase?: AssistantMessagePhase; parts: string[] }> = [];
+        const flushTextGroups = () => {
+          for (const group of textGroups) {
+            if (group.parts.length === 0) {
+              continue;
+            }
+            items.push({
+              type: "message",
+              role: "assistant",
+              content: group.parts.join(""),
+              ...(group.phase ? { phase: group.phase } : {}),
+            });
+          }
+          textGroups.length = 0;
+        };
         for (const block of content as Array<{
           type?: string;
           text?: string;
@@ -204,21 +259,20 @@ export function convertMessagesToInputItems(messages: Message[]): InputItem[] {
           name?: string;
           arguments?: Record<string, unknown>;
           thinking?: string;
+          phase?: unknown;
         }>) {
           if (block.type === "text" && typeof block.text === "string") {
-            textParts.push(block.text);
+            const phase = readAssistantTextPhase(block) ?? undefined;
+            const lastGroup = textGroups.at(-1);
+            if (!lastGroup || lastGroup.phase !== phase) {
+              textGroups.push({ phase, parts: [block.text] });
+            } else {
+              lastGroup.parts.push(block.text);
+            }
           } else if (block.type === "thinking" && typeof block.thinking === "string") {
             // Skip thinking blocks — not sent back to the model
           } else if (block.type === "toolCall") {
-            // Push accumulated text first
-            if (textParts.length > 0) {
-              items.push({
-                type: "message",
-                role: "assistant",
-                content: textParts.join(""),
-              });
-              textParts.length = 0;
-            }
+            flushTextGroups();
             const callId = toNonEmptyString(block.id);
             const toolName = toNonEmptyString(block.name);
             if (!callId || !toolName) {
@@ -236,13 +290,7 @@ export function convertMessagesToInputItems(messages: Message[]): InputItem[] {
             });
           }
         }
-        if (textParts.length > 0) {
-          items.push({
-            type: "message",
-            role: "assistant",
-            content: textParts.join(""),
-          });
-        }
+        flushTextGroups();
       } else {
         const text = contentToText(m.content);
         if (text) {
@@ -292,9 +340,17 @@ export function buildAssistantMessageFromResponse(
 
   for (const item of response.output ?? []) {
     if (item.type === "message") {
-      for (const part of item.content ?? []) {
+      const phase = normalizeAssistantMessagePhase(item.phase);
+      for (const [contentIndex, part] of (item.content ?? []).entries()) {
         if (part.type === "output_text" && part.text) {
-          content.push({ type: "text", text: part.text });
+          content.push(
+            buildAssistantTextBlock({
+              itemId: item.id,
+              text: part.text,
+              phase,
+              contentIndex,
+            }),
+          );
         }
       }
     } else if (item.type === "function_call") {

@@ -482,7 +482,7 @@ describe("convertMessagesToInputItems", () => {
 
   it("handles assistant messages with only tool calls (no text)", () => {
     const msg = assistantMsg([], [{ id: "call_2", name: "read", args: { path: "/etc/hosts" } }]);
-    const items = convertMessagesToInputItems([msg] as Parameters<
+    const items = convertMessagesToInputItems([msg] as unknown as Parameters<
       typeof convertMessagesToInputItems
     >[0]);
     expect(items).toHaveLength(1);
@@ -491,7 +491,7 @@ describe("convertMessagesToInputItems", () => {
 
   it("drops assistant tool calls with empty ids", () => {
     const msg = assistantMsg([], [{ id: "   ", name: "read", args: { path: "/tmp/a" } }]);
-    const items = convertMessagesToInputItems([msg] as Parameters<
+    const items = convertMessagesToInputItems([msg] as unknown as Parameters<
       typeof convertMessagesToInputItems
     >[0]);
     expect(items).toEqual([]);
@@ -511,11 +511,54 @@ describe("convertMessagesToInputItems", () => {
       usage: {},
       timestamp: 0,
     };
-    const items = convertMessagesToInputItems([msg] as Parameters<
+    const items = convertMessagesToInputItems([msg] as unknown as Parameters<
       typeof convertMessagesToInputItems
     >[0]);
     expect(items).toHaveLength(1);
     expect((items[0] as { content?: unknown }).content).toBe("Here is my answer.");
+  });
+
+  it("preserves assistant commentary phase when replaying assistant messages", () => {
+    const msg = {
+      role: "assistant" as const,
+      content: [
+        {
+          type: "text",
+          text: "Step 1/3: checking status.",
+          phase: "commentary" as const,
+          textSignature: JSON.stringify({ id: "sig-1", phase: "commentary" }),
+        },
+        {
+          type: "text",
+          text: "Final answer.",
+          phase: "final_answer" as const,
+          textSignature: JSON.stringify({ id: "sig-2", phase: "final_answer" }),
+        },
+      ],
+      stopReason: "stop",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.2",
+      usage: {},
+      timestamp: 0,
+    };
+
+    const items = convertMessagesToInputItems([msg] as unknown as Parameters<
+      typeof convertMessagesToInputItems
+    >[0]);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+      type: "message",
+      role: "assistant",
+      phase: "commentary",
+      content: "Step 1/3: checking status.",
+    });
+    expect(items[1]).toMatchObject({
+      type: "message",
+      role: "assistant",
+      phase: "final_answer",
+      content: "Final answer.",
+    });
   });
 
   it("returns empty array for empty messages", () => {
@@ -535,6 +578,34 @@ describe("buildAssistantMessageFromResponse", () => {
     const textBlock = msg.content[0] as { type: string; text: string };
     expect(textBlock.type).toBe("text");
     expect(textBlock.text).toBe("Hello from assistant");
+  });
+
+  it("preserves commentary phase in assistant text blocks", () => {
+    const response: ResponseObject = {
+      id: "resp_phase",
+      object: "response",
+      created_at: Date.now(),
+      status: "completed",
+      model: "gpt-5.2",
+      output: [
+        {
+          type: "message",
+          id: "item_1",
+          role: "assistant",
+          phase: "commentary",
+          content: [{ type: "output_text", text: "Checking status" }],
+        },
+      ],
+      usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+    };
+
+    const msg = buildAssistantMessageFromResponse(response, modelInfo);
+    expect(msg.content).toHaveLength(1);
+    expect(msg.content[0]).toMatchObject({
+      type: "text",
+      text: "Checking status",
+      phase: "commentary",
+    });
   });
 
   it("sets stopReason to 'stop' for text-only responses", () => {

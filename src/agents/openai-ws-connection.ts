@@ -15,6 +15,7 @@
 
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import type { AssistantMessagePhase } from "./assistant-output.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocket Event Types (Server → Client)
@@ -43,6 +44,7 @@ export type OutputItem =
       id: string;
       role: "assistant";
       content: Array<{ type: "output_text"; text: string }>;
+      phase?: AssistantMessagePhase | null;
       status?: "in_progress" | "completed";
     }
   | {
@@ -190,6 +192,7 @@ export type InputItem =
       type: "message";
       role: "system" | "developer" | "user" | "assistant";
       content: string | ContentPart[];
+      phase?: AssistantMessagePhase | null;
     }
   | { type: "function_call"; id?: string; call_id?: string; name: string; arguments: string }
   | { type: "function_call_output"; call_id: string; output: string }
