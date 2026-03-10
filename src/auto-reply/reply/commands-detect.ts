@@ -11,14 +11,28 @@ export const handleDetectCommand: CommandHandler = async (params, allowTextComma
     return null;
   }
 
-  const url = body.slice(8).trim();
-  if (!url) {
+  if (!params.command.isAuthorizedSender) {
     return {
       shouldContinue: false,
-      reply: {
-        text: "⚠️ Please provide a media URL.\nUsage: /detect <url>",
-      },
+      reply: { text: "❌ You are not authorized to use the /detect command." },
     };
+  }
+
+  let url = body.slice("/detect ".length).trim();
+  
+  if (!url) {
+    // Try to fall back to media attachments if no URL is provided in text
+    const mediaUrl = params.payload.mediaUrl || params.payload.mediaUrls?.[0];
+    if (mediaUrl) {
+      url = mediaUrl;
+    } else {
+      return {
+        shouldContinue: false,
+        reply: {
+          text: "⚠️ Please provide a media URL or attach a file.\nUsage: /detect <url> or upload a file with the caption /detect",
+        },
+      };
+    }
   }
 
   try {

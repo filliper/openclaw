@@ -15,6 +15,9 @@ export async function detectDeepfake(mediaUrl: string, cfg: OpenClawConfig) {
     };
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000);
+
   try {
     const response = await fetch("https://app.resemble.ai/api/v2/detect", {
       method: "POST",
@@ -24,6 +27,7 @@ export async function detectDeepfake(mediaUrl: string, cfg: OpenClawConfig) {
         Prefer: "wait",
       },
       body: JSON.stringify({ url: mediaUrl, visualize: true }),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -34,9 +38,15 @@ export async function detectDeepfake(mediaUrl: string, cfg: OpenClawConfig) {
     }
 
     const data = await response.json();
-    return { success: true, item: data.item || data };
+    return { success: true, item: data.item ?? data };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const error = err as Error;
+    if (error.name === "AbortError") {
+      return { success: false, error: "Resemble Detect API request timed out." };
+    }
+    const message = error.message ? error.message : String(err);
     return { success: false, error: message };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
