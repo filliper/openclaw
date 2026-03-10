@@ -17,6 +17,17 @@ describe("resolveMessageChannelSelection", () => {
   });
 
   it("keeps explicit known channels and marks source explicit", async () => {
+    mocks.listChannelPlugins.mockReturnValue([
+      {
+        id: "telegram",
+        config: {
+          listAccountIds: () => ["default"],
+          resolveAccount: () => ({}),
+          isConfigured: async () => true,
+        },
+      },
+    ]);
+
     const selection = await resolveMessageChannelSelection({
       cfg: {} as never,
       channel: "telegram",
@@ -24,7 +35,7 @@ describe("resolveMessageChannelSelection", () => {
 
     expect(selection).toEqual({
       channel: "telegram",
-      configured: [],
+      configured: ["telegram"],
       source: "explicit",
     });
   });
@@ -87,5 +98,59 @@ describe("resolveMessageChannelSelection", () => {
         fallbackChannel: "not-a-channel",
       }),
     ).rejects.toThrow("Unknown channel: channel:c123");
+  });
+
+  it("throws when explicit channel is known but not configured (#42080)", async () => {
+    await expect(
+      resolveMessageChannelSelection({
+        cfg: {} as never,
+        channel: "whatsapp",
+      }),
+    ).rejects.toThrow('Channel "whatsapp" is not configured.');
+  });
+
+  it("falls back to context channel when explicit channel is unconfigured (#42080)", async () => {
+    mocks.listChannelPlugins.mockReturnValue([
+      {
+        id: "discord",
+        config: {
+          listAccountIds: () => ["default"],
+          resolveAccount: () => ({}),
+          isConfigured: async () => true,
+        },
+      },
+    ]);
+
+    const selection = await resolveMessageChannelSelection({
+      cfg: {} as never,
+      channel: "whatsapp",
+      fallbackChannel: "discord",
+    });
+
+    expect(selection).toEqual({
+      channel: "discord",
+      configured: ["discord"],
+      source: "tool-context-fallback",
+    });
+  });
+
+  it("includes configured channels hint in unconfigured channel error (#42080)", async () => {
+    mocks.listChannelPlugins.mockReturnValue([
+      {
+        id: "telegram",
+        config: {
+          listAccountIds: () => ["default"],
+          resolveAccount: () => ({}),
+          isConfigured: async () => true,
+        },
+      },
+    ]);
+
+    await expect(
+      resolveMessageChannelSelection({
+        cfg: {} as never,
+        channel: "whatsapp",
+      }),
+    ).rejects.toThrow('Channel "whatsapp" is not configured. Configured channels: telegram.');
   });
 });
