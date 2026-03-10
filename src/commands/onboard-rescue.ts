@@ -342,6 +342,11 @@ async function waitForRescueGatewayIdentity(params: {
             (listener.pid === runtime.pid || listener.ppid === runtime.pid)) ||
           classifyPortListener(listener, params.rescuePort) === "gateway",
       );
+    // Some supervisors can start a healthy gateway before exposing stable
+    // runtime/PID metadata. Accept a probe-confirmed gateway in that case.
+    const ownershipMetadataUnavailable =
+      (runtime.status === "unknown" || runtime.pid == null) &&
+      (portUsage.status !== "busy" || portUsage.listeners.length === 0);
 
     const probe = await probeGateway({
       url: wsUrl,
@@ -350,7 +355,7 @@ async function waitForRescueGatewayIdentity(params: {
     const probeLooksLikeGateway =
       probe?.ok === true || looksLikeAuthClose(probe?.close?.code, probe?.close?.reason);
 
-    if (listenerOwnedByRuntime && probeLooksLikeGateway) {
+    if (probeLooksLikeGateway && (listenerOwnedByRuntime || ownershipMetadataUnavailable)) {
       return;
     }
 

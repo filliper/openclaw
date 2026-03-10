@@ -367,6 +367,41 @@ describe("setupRescueWatchdog", () => {
     expect(rescueStore.profiles["rescue-only"]?.key).toBe("rescue-secret");
   });
 
+  it("accepts a healthy rescue gateway when runtime metadata is unavailable", async () => {
+    process.env.HOME = tempHome;
+    process.env.OPENCLAW_TEST_FAST = "1";
+    process.env.OPENCLAW_PROFILE = "work";
+
+    gatewayReadRuntime.mockResolvedValue({
+      status: "unknown",
+    });
+    inspectPortUsage.mockResolvedValue({
+      port: 19_789,
+      status: "unknown",
+      listeners: [],
+      hints: [],
+      errors: [],
+    });
+
+    await expect(
+      setupRescueWatchdog({
+        sourceConfig: {
+          tools: { profile: "coding" },
+        },
+        workspaceDir: path.join(tempHome, "workspace-work"),
+        mainPort: 18_789,
+        monitoredProfile: "work",
+        runtime: "node",
+        output: {
+          log: vi.fn(),
+        },
+      }),
+    ).resolves.toMatchObject({
+      enabled: true,
+      monitoredProfile: "work",
+    });
+  });
+
   it("reinstalls the rescue service when the installed command drifts", async () => {
     process.env.HOME = tempHome;
     process.env.OPENCLAW_TEST_FAST = "1";
