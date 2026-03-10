@@ -74,6 +74,10 @@ export type EmbeddingProviderOptions = {
     modelPath?: string;
     modelCacheDir?: string;
   };
+  /** Gemini embedding-2: output vector dimensions (768, 1536, or 3072). */
+  outputDimensionality?: number;
+  /** Gemini: override the default task type sent with embedding requests. */
+  taskType?: string;
 };
 
 export const DEFAULT_LOCAL_MODEL =
