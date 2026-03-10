@@ -54,12 +54,14 @@ async function getPluginMediaProviderOverrides(): Promise<
 
     for (const entry of registry.mediaProviders) {
       const p = entry.provider;
-      const capabilities = p.capabilities
+      const capabilitiesList = p.capabilities;
+      const capabilities = capabilitiesList
         ?.map(mapCapability)
         .filter((c): c is MediaUnderstandingCapability => c !== undefined);
+      const hasCapabilities = capabilities && capabilities.length > 0;
       const provider: MediaUnderstandingProvider = {
         id: p.id,
-        capabilities: capabilities.length > 0 ? capabilities : undefined,
+        capabilities: hasCapabilities ? capabilities : undefined,
         transcribeAudio: p.transcribeAudio as MediaUnderstandingProvider["transcribeAudio"],
         describeImage: p.describeImage as MediaUnderstandingProvider["describeImage"],
         describeVideo: p.describeVideo as MediaUnderstandingProvider["describeVideo"],
