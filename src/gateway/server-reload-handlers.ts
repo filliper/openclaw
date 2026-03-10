@@ -1,9 +1,12 @@
+import { listAgentIds } from "../agents/agent-scope.js";
 import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/runs.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
 import type { CliDeps } from "../cli/deps.js";
 import { resolveAgentMaxConcurrent, resolveSubagentMaxConcurrent } from "../config/agent-limits.js";
 import { isRestartEnabled } from "../config/commands.js";
 import type { loadConfig } from "../config/config.js";
+import { resolveStorePath } from "../config/sessions/paths.js";
+import { clearSessionModelFields } from "../config/sessions/store.js";
 import { startGmailWatcherWithLogs } from "../hooks/gmail-watcher-lifecycle.js";
 import { stopGmailWatcher } from "../hooks/gmail-watcher.js";
 import { isTruthyEnvValue } from "../infra/env.js";
@@ -109,6 +112,30 @@ export function createGatewayReloadHandlers(params: {
         onSkipped: () =>
           params.logHooks.info("skipping gmail watcher restart (OPENCLAW_SKIP_GMAIL_WATCHER=1)"),
       });
+    }
+
+    if (plan.resetSessionModels) {
+      const agentIds = listAgentIds(nextConfig);
+      let totalCleared = 0;
+      for (const agentId of agentIds) {
+        try {
+          const storePath = resolveStorePath(nextConfig.session?.store, { agentId });
+          const cleared = await clearSessionModelFields(storePath);
+          totalCleared += cleared;
+        } catch (err) {
+          // Session store may not exist yet for some agents — ignore ENOENT.
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            params.logReload.warn(
+              `failed to clear session models for agent ${agentId}: ${String(err)}`,
+            );
+          }
+        }
+      }
+      if (totalCleared > 0) {
+        params.logReload.info(
+          `cleared persisted model from ${totalCleared} session(s) to pick up new default model`,
+        );
+      }
     }
 
     if (plan.restartChannels.size > 0) {
