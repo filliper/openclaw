@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import * as tar from "tar";
 import type { RuntimeEnv } from "../runtime.js";
-import { resolveHomeDir, resolveUserPath } from "../utils.js";
+import { sanitizeTerminalText } from "../terminal/safe-text.js";
+import { resolveHomeDir, resolveUserPath, shortenHomePath } from "../utils.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
 import {
   buildBackupArchiveBasename,
@@ -22,6 +23,7 @@ export type BackupCreateOptions = {
   dryRun?: boolean;
   includeWorkspace?: boolean;
   onlyConfig?: boolean;
+  // Internal escape hatch for non-CLI callers. `openclaw backup create` always validates on success.
   verify?: boolean;
   json?: boolean;
   nowMs?: number;
@@ -233,28 +235,34 @@ function buildManifest(params: {
 }
 
 function formatTextSummary(result: BackupCreateResult): string[] {
-  const lines = [`Backup archive: ${result.archivePath}`];
+  const displayArchivePath = sanitizeTerminalText(shortenHomePath(result.archivePath));
+  const lines = [
+    result.dryRun
+      ? `Planned backup archive: ${displayArchivePath}`
+      : result.verified
+        ? `Validated backup archive: ${displayArchivePath}`
+        : `Backup archive created without validation: ${displayArchivePath}`,
+  ];
   lines.push(`Included ${result.assets.length} path${result.assets.length === 1 ? "" : "s"}:`);
   for (const asset of result.assets) {
-    lines.push(`- ${asset.kind}: ${asset.displayPath}`);
+    lines.push(`- ${asset.kind}: ${sanitizeTerminalText(asset.displayPath)}`);
   }
   if (result.skipped.length > 0) {
     lines.push(`Skipped ${result.skipped.length} path${result.skipped.length === 1 ? "" : "s"}:`);
     for (const entry of result.skipped) {
+      const displayPath = sanitizeTerminalText(entry.displayPath);
+      const coveredBy = entry.coveredBy ? sanitizeTerminalText(entry.coveredBy) : undefined;
       if (entry.reason === "covered" && entry.coveredBy) {
-        lines.push(`- ${entry.kind}: ${entry.displayPath} (${entry.reason} by ${entry.coveredBy})`);
+        lines.push(`- ${entry.kind}: ${displayPath} (${entry.reason} by ${coveredBy})`);
       } else {
-        lines.push(`- ${entry.kind}: ${entry.displayPath} (${entry.reason})`);
+        lines.push(`- ${entry.kind}: ${displayPath} (${entry.reason})`);
       }
     }
   }
   if (result.dryRun) {
     lines.push("Dry run only; archive was not written.");
-  } else {
-    lines.push(`Created ${result.archivePath}`);
-    if (result.verified) {
-      lines.push("Archive verification: passed");
-    }
+  } else if (result.verified) {
+    lines.push("Archive verification: passed");
   }
   return lines;
 }
@@ -275,6 +283,7 @@ export async function backupCreateCommand(
   runtime: RuntimeEnv,
   opts: BackupCreateOptions = {},
 ): Promise<BackupCreateResult> {
+  const shouldVerify = !opts.dryRun && opts.verify !== false;
   const nowMs = opts.nowMs ?? Date.now();
   const archiveRoot = buildBackupArchiveRoot(nowMs);
   const onlyConfig = Boolean(opts.onlyConfig);
@@ -364,15 +373,23 @@ export async function backupCreateCommand(
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
 
-    if (opts.verify) {
-      await backupVerifyCommand(
-        {
-          ...runtime,
-          log: () => {},
-        },
-        { archive: outputPath, json: false },
-      );
-      result.verified = true;
+    if (shouldVerify) {
+      try {
+        await backupVerifyCommand(
+          {
+            ...runtime,
+            log: () => {},
+          },
+          { archive: outputPath, json: false },
+        );
+        result.verified = true;
+      } catch (err) {
+        await fs.rm(outputPath, { force: true }).catch(() => undefined);
+        throw new Error(
+          `Backup archive failed validation after writing and was removed: ${outputPath}`,
+          { cause: err },
+        );
+      }
     }
   }
 
