@@ -114,6 +114,8 @@ export type AcpStartupIdentityReconcileResult = {
   checked: number;
   resolved: number;
   failed: number;
+  reaped: number;
+  reapedSessionKeys: string[];
 };
 
 export type ActiveTurnState = {
