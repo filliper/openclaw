@@ -1642,16 +1642,12 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
     let lastSentText = "";
     let patchInterval: ReturnType<typeof setInterval> | null = null;
     let patchSending = false; // prevents concurrent network calls
-    // Resolved reply target for the streaming message — computed upfront the same way
-    // the non-streaming deliver path does it via resolveMattermostReplyRootId.
-    // For top-level inbound posts threadRootId is empty, so we fall back to
-    // payload.replyToId (the inbound message's reply target).
+    // Resolved reply target for the streaming message.
+    // threadRootId (= post.root_id) is already the correct thread root for in-thread replies.
+    // For top-level inbound posts it is undefined, matching non-streaming deliver behaviour.
     // NOTE: do NOT try to derive this from onPartialReply callbacks — those are invoked
     // with only { text, mediaUrls } and carry no replyToId.
-    let streamReplyToId: string | undefined = resolveMattermostReplyRootId({
-      threadRootId,
-      replyToId: payload.replyToId,
-    });
+    let streamReplyToId: string | undefined = threadRootId;
     const STREAM_PATCH_INTERVAL_MS = 200;
 
     // Use the already-resolved baseUrl/botToken from the outer scope
