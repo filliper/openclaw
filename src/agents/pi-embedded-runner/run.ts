@@ -47,6 +47,7 @@ import {
   isLikelyContextOverflowError,
   isFailoverAssistantError,
   isFailoverErrorMessage,
+  isLikelySSEParseError,
   parseImageSizeError,
   parseImageDimensionError,
   isRateLimitAssistantError,
@@ -138,6 +139,7 @@ const BASE_RUN_RETRY_ITERATIONS = 24;
 const RUN_RETRY_ITERATIONS_PER_PROFILE = 8;
 const MIN_RUN_RETRY_ITERATIONS = 32;
 const MAX_RUN_RETRY_ITERATIONS = 160;
+const MAX_SSE_PARSE_RETRIES = 3;
 
 function resolveMaxRunRetryIterations(profileCandidateCount: number): number {
   const scaled =
@@ -747,6 +749,7 @@ export async function runEmbeddedPiAgent(
       let autoCompactionCount = 0;
       let runLoopIterations = 0;
       let overloadFailoverAttempts = 0;
+      let sseParseRetries = 0;
       const maybeMarkAuthProfileFailure = async (failure: {
         profileId?: string;
         reason?: AuthProfileFailureReason | null;
@@ -965,6 +968,12 @@ export async function runEmbeddedPiAgent(
               ? lastAssistant.errorMessage?.trim() || formattedAssistantErrorText
               : undefined;
 
+          // Reset SSE retry budget on successful turns so scattered transient
+          // errors across a long session don't permanently exhaust the budget.
+          if (!promptError && !assistantErrorText) {
+            sseParseRetries = 0;
+          }
+
           const contextOverflowError = !aborted
             ? (() => {
                 if (promptError) {
@@ -1004,6 +1013,7 @@ export async function runEmbeddedPiAgent(
               overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS
             ) {
               overflowCompactionAttempts++;
+              sseParseRetries = 0;
               log.warn(
                 `context overflow persisted after in-attempt compaction (attempt ${overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); retrying prompt without additional compaction for ${provider}/${modelId}`,
               );
@@ -1060,6 +1070,7 @@ export async function runEmbeddedPiAgent(
               });
               if (compactResult.compacted) {
                 autoCompactionCount += 1;
+                sseParseRetries = 0;
                 log.info(`auto-compaction succeeded for ${provider}/${modelId}; retrying prompt`);
                 continue;
               }
@@ -1099,6 +1110,7 @@ export async function runEmbeddedPiAgent(
                   sessionKey: params.sessionKey,
                 });
                 if (truncResult.truncated) {
+                  sseParseRetries = 0;
                   log.info(
                     `[context-overflow-recovery] Truncated ${truncResult.truncatedCount} tool result(s); retrying prompt`,
                   );
@@ -1160,6 +1172,7 @@ export async function runEmbeddedPiAgent(
             const errorText = describeUnknownError(promptError);
             if (await maybeRefreshCopilotForAuthError(errorText, copilotAuthRetry)) {
               authRetryPending = true;
+              sseParseRetries = 0;
               continue;
             }
             // Handle role ordering errors with a user-friendly message
@@ -1221,6 +1234,17 @@ export async function runEmbeddedPiAgent(
                 },
               };
             }
+            // SSE parse error retry — 反向代理截断 SSE 行时触发，重试即可恢复
+            if (
+              sseParseRetries < MAX_SSE_PARSE_RETRIES &&
+              isLikelySSEParseError(errorText, { streamingContext: true })
+            ) {
+              sseParseRetries++;
+              log.warn(
+                `SSE parse error detected (attempt ${sseParseRetries}/${MAX_SSE_PARSE_RETRIES}); retrying for ${provider}/${modelId}`,
+              );
+              continue;
+            }
             const promptFailoverReason = classifyFailoverReason(errorText);
             const promptProfileFailureReason =
               resolveAuthProfileFailureReason(promptFailoverReason);
@@ -1249,6 +1273,7 @@ export async function runEmbeddedPiAgent(
               (await advanceAuthProfile())
             ) {
               logPromptFailoverDecision("rotate_profile");
+              sseParseRetries = 0;
               await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
               continue;
             }
@@ -1261,6 +1286,7 @@ export async function runEmbeddedPiAgent(
                 `unsupported thinking level for ${provider}/${modelId}; retrying with ${fallbackThinking}`,
               );
               thinkLevel = fallbackThinking;
+              sseParseRetries = 0;
               continue;
             }
             // Throw FailoverError for prompt-side failover reasons when fallbacks
@@ -1293,6 +1319,7 @@ export async function runEmbeddedPiAgent(
               `unsupported thinking level for ${provider}/${modelId}; retrying with ${fallbackThinking}`,
             );
             thinkLevel = fallbackThinking;
+            sseParseRetries = 0;
             continue;
           }
 
@@ -1329,6 +1356,7 @@ export async function runEmbeddedPiAgent(
             ))
           ) {
             authRetryPending = true;
+            sseParseRetries = 0;
             continue;
           }
           if (imageDimensionError && lastProfileId) {
@@ -1348,6 +1376,22 @@ export async function runEmbeddedPiAgent(
             log.warn(
               `Profile ${lastProfileId} rejected image payload${details ? ` (${details})` : ""}.`,
             );
+          }
+
+          // SSE parse error retry — assistant 错误分支
+          if (
+            !aborted &&
+            lastAssistant?.stopReason === "error" &&
+            sseParseRetries < MAX_SSE_PARSE_RETRIES &&
+            isLikelySSEParseError(lastAssistant.errorMessage ?? "", {
+              streamingContext: true,
+            })
+          ) {
+            sseParseRetries++;
+            log.warn(
+              `SSE parse error in assistant response (attempt ${sseParseRetries}/${MAX_SSE_PARSE_RETRIES}); retrying for ${provider}/${modelId}`,
+            );
+            continue;
           }
 
           // Rotate on timeout to try another account/model path in this turn,
@@ -1378,6 +1422,7 @@ export async function runEmbeddedPiAgent(
             const rotated = await advanceAuthProfile();
             if (rotated) {
               logAssistantFailoverDecision("rotate_profile");
+              sseParseRetries = 0;
               await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
               continue;
             }
