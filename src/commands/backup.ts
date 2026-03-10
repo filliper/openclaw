@@ -267,9 +267,15 @@ function remapArchiveEntryPath(params: {
 }): string {
   const normalizedEntry = path.resolve(params.entryPath);
   if (normalizedEntry === params.manifestPath) {
-    return assertSafeArchiveEntryPath(path.posix.join(params.archiveRoot, "manifest.json"));
+    return assertArchiveEntryWithinRoot(
+      path.posix.join(params.archiveRoot, "manifest.json"),
+      params.archiveRoot,
+    );
   }
-  return assertSafeArchiveEntryPath(buildBackupArchivePath(params.archiveRoot, normalizedEntry));
+  return assertArchiveEntryWithinRoot(
+    buildBackupArchivePath(params.archiveRoot, normalizedEntry),
+    params.archiveRoot,
+  );
 }
 
 function assertSafeArchiveEntryPath(entryPath: string): string {
@@ -280,6 +286,14 @@ function assertSafeArchiveEntryPath(entryPath: string): string {
     normalized.startsWith("/") ||
     segments.some((segment) => segment === ".." || segment === ".")
   ) {
+    throw new Error(`Unsafe archive path: ${entryPath}`);
+  }
+  return normalized;
+}
+
+function assertArchiveEntryWithinRoot(entryPath: string, archiveRoot: string): string {
+  const normalized = assertSafeArchiveEntryPath(entryPath);
+  if (normalized !== archiveRoot && !normalized.startsWith(`${archiveRoot}/`)) {
     throw new Error(`Unsafe archive path: ${entryPath}`);
   }
   return normalized;
