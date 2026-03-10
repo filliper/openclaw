@@ -55,6 +55,7 @@ import {
   applyOwnerOnlyToolPolicy,
   collectExplicitAllowlist,
   mergeAlsoAllowPolicy,
+  normalizeToolName,
   resolveToolProfilePolicy,
 } from "./tool-policy.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
@@ -284,6 +285,7 @@ export function createOpenClawCodingTools(options?: {
     agentProviderPolicy,
     profile,
     providerProfile,
+    explicitProfileAlsoAllow,
     profileAlsoAllow,
     providerProfileAlsoAllow,
   } = resolveEffectiveToolPolicy({
@@ -569,6 +571,37 @@ export function createOpenClawCodingTools(options?: {
   // Security: treat unknown/undefined as unauthorized (opt-in, not opt-out)
   const senderIsOwner = options?.senderIsOwner === true;
   const toolsByAuthorization = applyOwnerOnlyToolPolicy(toolsForModelProvider, senderIsOwner);
+  // Sandbox step: merge sandbox allow with the agent's explicit tools.alsoAllow entries
+  // (plugins, or explicitly re-exposed tools) so they are not dropped (see #41757).
+  // Sandbox deny still applies. Preserve sandbox semantics where an empty allowlist
+  // means "allow all" (sandbox/tool-policy.ts): only merge when sandbox.tools.allow
+  // is non-empty, and only with explicitProfileAlsoAllow (no implicit exec/fs exposure).
+  const sandboxAllow = sandbox?.tools?.allow;
+  const pluginAllowFromExplicitAlsoAllow =
+    explicitProfileAlsoAllow && explicitProfileAlsoAllow.length > 0
+      ? explicitProfileAlsoAllow.filter((name) => {
+          const normalized = normalizeToolName(name);
+          return toolsByAuthorization.some((tool) => {
+            if (normalizeToolName(tool.name) !== normalized) {
+              return false;
+            }
+            return getPluginToolMeta(tool) !== undefined;
+          });
+        })
+      : undefined;
+  const sandboxStepPolicy =
+    sandbox?.tools &&
+    sandboxAllow &&
+    sandboxAllow.length > 0 &&
+    (pluginAllowFromExplicitAlsoAllow?.length ?? 0) > 0
+      ? {
+          allow: Array.from(
+            new Set([...(sandboxAllow ?? []), ...(pluginAllowFromExplicitAlsoAllow ?? [])]),
+          ),
+          deny: sandbox.tools.deny ?? [],
+        }
+      : sandbox?.tools;
+
   const subagentFiltered = applyToolPolicyPipeline({
     tools: toolsByAuthorization,
     toolMeta: (tool) => getPluginToolMeta(tool),
@@ -586,7 +619,7 @@ export function createOpenClawCodingTools(options?: {
         groupPolicy,
         agentId,
       }),
-      { policy: sandbox?.tools, label: "sandbox tools.allow" },
+      { policy: sandboxStepPolicy, label: "sandbox tools.allow" },
       { policy: subagentPolicy, label: "subagent tools.allow" },
     ],
   });
