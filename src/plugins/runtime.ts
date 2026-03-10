@@ -43,6 +43,24 @@ export function setActivePluginRegistry(registry: PluginRegistry, cacheKey?: str
   state.key = cacheKey ?? null;
   state.version += 1;
   void invalidatePluginCaches();
+  // Populate media caches eagerly when plugins are loaded
+  void populateMediaProviderCaches();
+}
+
+async function populateMediaProviderCaches(): Promise<void> {
+  try {
+    const { buildMediaUnderstandingRegistryAsync } =
+      await import("../media-understanding/providers/index.js");
+    await buildMediaUnderstandingRegistryAsync();
+  } catch {
+    // Media providers may not be available
+  }
+  try {
+    const { buildTtsProviderRegistryAsync } = await import("../tts/providers.js");
+    await buildTtsProviderRegistryAsync();
+  } catch {
+    // TTS providers may not be available
+  }
 }
 
 export function getActivePluginRegistry(): PluginRegistry | null {

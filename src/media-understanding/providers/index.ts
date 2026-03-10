@@ -89,50 +89,9 @@ let pluginOverridesPromise: Promise<Record<string, MediaUnderstandingProvider>> 
 export function buildMediaUnderstandingRegistry(
   overrides?: Record<string, MediaUnderstandingProvider>,
 ): Map<string, MediaUnderstandingProvider> {
-  // If cache exists, use it. Otherwise try to populate synchronously.
-  if (!cachedPluginOverrides) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { requireActivePluginRegistry } = require("../../plugins/runtime.js");
-      const registry = requireActivePluginRegistry();
-      const pluginOverrides: Record<string, MediaUnderstandingProvider> = {};
-
-      for (const entry of registry.mediaProviders) {
-        const p = entry.provider;
-        const capabilitiesList = p.capabilities;
-        const capabilities = capabilitiesList
-          ?.map(mapCapability)
-          .filter(
-            (c: MediaUnderstandingCapability | undefined): c is MediaUnderstandingCapability =>
-              c !== undefined,
-          );
-        const hasMediaCapabilities = capabilities && capabilities.length > 0;
-
-        // Skip providers that only have non-media capabilities (e.g., TTS-only)
-        if (!hasMediaCapabilities) {
-          continue;
-        }
-
-        const normalizedId = normalizeMediaProviderId(p.id);
-        const provider: MediaUnderstandingProvider = {
-          id: normalizedId,
-          capabilities,
-          transcribeAudio: p.transcribeAudio as MediaUnderstandingProvider["transcribeAudio"],
-          describeImage: p.describeImage as MediaUnderstandingProvider["describeImage"],
-          describeVideo: p.describeVideo as MediaUnderstandingProvider["describeVideo"],
-          textToSpeech: p.textToSpeech as MediaUnderstandingProvider["textToSpeech"],
-        };
-        pluginOverrides[normalizedId] = provider;
-      }
-      cachedPluginOverrides = pluginOverrides;
-      // Set promise so async path knows cache is populated
-      if (!pluginOverridesPromise) {
-        pluginOverridesPromise = Promise.resolve(cachedPluginOverrides);
-      }
-    } catch {
-      // Plugins not available
-    }
-  }
+  // Sync path can only use pre-populated cache from async path.
+  // Dynamic imports don't work in sync functions, so plugin loading
+  // must happen via buildMediaUnderstandingRegistryAsync() first.
 
   const registry = new Map<string, MediaUnderstandingProvider>();
   for (const provider of PROVIDERS) {
