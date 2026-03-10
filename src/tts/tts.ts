@@ -610,10 +610,8 @@ export async function textToSpeech(params: {
         const tempRoot = resolvePreferredOpenClawTmpDir();
         mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
         const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
-        const audioPath = path.join(
-          tempDir,
-          `voice-${Date.now()}.${result.mime.split("/")[1] || "mp3"}`,
-        );
+        const mimeExt = result.mime.split("/")[1]?.split(";")[0] || "mp3";
+        const audioPath = path.join(tempDir, `voice-${Date.now()}.${mimeExt}`);
         writeFileSync(audioPath, result.audio);
         scheduleCleanup(tempDir);
 

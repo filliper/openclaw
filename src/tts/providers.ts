@@ -1,3 +1,4 @@
+import { normalizeProviderId } from "../agents/model-selection.js";
 import type { TextToSpeechRequest, TextToSpeechResult } from "../media-understanding/types.js";
 
 export type TtsProvider = {
@@ -27,7 +28,7 @@ async function getPluginTtsProviderOverrides(): Promise<Record<string, TtsProvid
         id: p.id,
         textToSpeech: p.textToSpeech,
       };
-      overrides[p.id] = provider;
+      overrides[normalizeProviderId(p.id)] = provider;
     }
 
     return overrides;
