@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createWindowsCmdShimFixture } from "../../../shared/windows-cmd-shim-test-fixtures.js";
 import {
+  resolveAcpxSpawnEnv,
   resolveSpawnCommand,
   spawnAndCollect,
   type SpawnCommandCache,
@@ -40,6 +41,34 @@ afterEach(async () => {
       retryDelay: 8,
     });
   }
+});
+
+describe("resolveAcpxSpawnEnv", () => {
+  it("sets OPENCLAW_SHELL marker and preserves unrelated env", () => {
+    const env = resolveAcpxSpawnEnv({
+      PATH: "/usr/bin",
+      USER: "openclaw",
+    });
+
+    expect(env.OPENCLAW_SHELL).toBe("acp");
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.USER).toBe("openclaw");
+  });
+
+  it("strips skill-injected env keys before spawning", () => {
+    const env = resolveAcpxSpawnEnv(
+      {
+        OPENAI_API_KEY: "openai-test-value", // pragma: allowlist secret
+        ANTHROPIC_API_KEY: "anthropic-test-value", // pragma: allowlist secret
+        OPENCLAW_SHELL: "wrong",
+      },
+      { stripKeys: new Set(["OPENAI_API_KEY", "OPENCLAW_SHELL"]) },
+    );
+
+    expect(env.OPENCLAW_SHELL).toBe("acp");
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBe("anthropic-test-value");
+  });
 });
 
 describe("resolveSpawnCommand", () => {
