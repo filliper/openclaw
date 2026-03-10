@@ -246,6 +246,60 @@ describe("applyJobPatch", () => {
     });
   });
 
+  it("rejects delivery on rescue watchdog jobs", () => {
+    const expectedError = 'cron payload.kind="rescueWatchdog" does not support delivery';
+
+    expect(() =>
+      createJob(
+        {
+          deps: {
+            defaultAgentId: "main",
+            nowMs: () => Date.now(),
+          },
+        } as unknown as CronServiceState,
+        {
+          name: "rescue-delivery",
+          enabled: true,
+          schedule: { kind: "every", everyMs: 60_000 },
+          sessionTarget: "isolated",
+          wakeMode: "now",
+          payload: {
+            kind: "rescueWatchdog",
+            monitoredProfile: "default",
+          },
+          delivery: { mode: "announce", channel: "telegram", to: "123" },
+        },
+      ),
+    ).toThrow(expectedError);
+  });
+
+  it("rejects failure destinations on rescue watchdog jobs", () => {
+    const expectedError =
+      'cron payload.kind="rescueWatchdog" does not support delivery.failureDestination';
+    const job = createIsolatedAgentTurnJob(
+      "job-rescue-failure-destination",
+      {
+        mode: "none",
+      },
+      {
+        payload: {
+          kind: "rescueWatchdog",
+          monitoredProfile: "default",
+        },
+        delivery: { mode: "none" },
+      },
+    );
+
+    expect(() =>
+      applyJobPatch(job, {
+        delivery: {
+          mode: "none",
+          failureDestination: { mode: "webhook", to: "https://example.invalid/rescue" },
+        },
+      }),
+    ).toThrow(expectedError);
+  });
+
   it("rejects webhook delivery without a valid http(s) target URL", () => {
     const expectedError = "cron webhook delivery requires delivery.to to be a valid http(s) URL";
     const cases = [

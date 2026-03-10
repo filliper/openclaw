@@ -180,10 +180,13 @@ function validateTelegramDeliveryTarget(to: string | undefined): string | undefi
   return undefined;
 }
 
-function assertDeliverySupport(job: Pick<CronJob, "sessionTarget" | "delivery">) {
+function assertDeliverySupport(job: Pick<CronJob, "sessionTarget" | "delivery" | "payload">) {
   // No delivery object or mode is "none" -- nothing to validate.
   if (!job.delivery || job.delivery.mode === "none") {
     return;
+  }
+  if (job.payload.kind === "rescueWatchdog") {
+    throw new Error('cron payload.kind="rescueWatchdog" does not support delivery');
   }
   if (job.delivery.mode === "webhook") {
     const target = normalizeHttpWebhookUrl(job.delivery.to);
@@ -204,10 +207,17 @@ function assertDeliverySupport(job: Pick<CronJob, "sessionTarget" | "delivery">)
   }
 }
 
-function assertFailureDestinationSupport(job: Pick<CronJob, "sessionTarget" | "delivery">) {
+function assertFailureDestinationSupport(
+  job: Pick<CronJob, "sessionTarget" | "delivery" | "payload">,
+) {
   const failureDestination = job.delivery?.failureDestination;
   if (!failureDestination) {
     return;
+  }
+  if (job.payload.kind === "rescueWatchdog") {
+    throw new Error(
+      'cron payload.kind="rescueWatchdog" does not support delivery.failureDestination',
+    );
   }
   if (job.sessionTarget === "main" && job.delivery?.mode !== "webhook") {
     throw new Error(
