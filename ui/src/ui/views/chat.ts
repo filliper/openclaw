@@ -36,6 +36,7 @@ export type ChatProps = {
   onSessionKeyChange: (next: string) => void;
   thinkingLevel: string | null;
   showThinking: boolean;
+  showTools: boolean;
   loading: boolean;
   sending: boolean;
   canAbort?: boolean;
@@ -563,7 +564,13 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
       continue;
     }
 
-    if (!props.showThinking && normalized.role.toLowerCase() === "toolresult") {
+    if (normalized.role.toLowerCase() === "toolresult" && !props.showThinking) {
+      continue;
+    }
+    if (
+      ["tool", "function", "toolresult"].includes(normalized.role.toLowerCase()) &&
+      !props.showTools
+    ) {
       continue;
     }
 
@@ -587,7 +594,7 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
         startedAt: segments[i].ts,
       });
     }
-    if (i < tools.length) {
+    if (i < tools.length && props.showTools) {
       items.push({
         kind: "message",
         key: messageKey(tools[i], i + history.length),
