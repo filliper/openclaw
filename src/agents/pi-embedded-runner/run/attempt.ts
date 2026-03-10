@@ -842,6 +842,8 @@ export async function runEmbeddedAttempt(
     });
     // Track sessions_yield tool invocation (callback pattern, like clientToolCallDetected)
     let yieldDetected = false;
+    // Late-binding reference so onYield can abort the session (declared after tool creation)
+    let abortSessionForYield: (() => void) | null = null;
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
     const toolsRaw = params.disableTools
@@ -888,6 +890,8 @@ export async function runEmbeddedAttempt(
           disableMessageTool: params.disableMessageTool,
           onYield: () => {
             yieldDetected = true;
+            runAbortController.abort("sessions_yield");
+            abortSessionForYield?.();
           },
         });
     const toolsEnabled = supportsModelTools(params.model);
@@ -1199,6 +1203,9 @@ export async function runEmbeddedAttempt(
         throw new Error("Embedded agent session missing");
       }
       const activeSession = session;
+      abortSessionForYield = () => {
+        void activeSession.abort();
+      };
       removeToolResultContextGuard = installToolResultContextGuard({
         agent: activeSession.agent,
         contextWindowTokens: Math.max(
@@ -1788,8 +1795,13 @@ export async function runEmbeddedAttempt(
             await abortable(activeSession.prompt(effectivePrompt));
           }
         } catch (err) {
-          promptError = err;
-          promptErrorSource = "prompt";
+          // Yield-triggered abort is intentional — treat as clean stop, not error
+          if (yieldDetected && isRunnerAbortError(err)) {
+            aborted = false;
+          } else {
+            promptError = err;
+            promptErrorSource = "prompt";
+          }
         } finally {
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
@@ -1816,12 +1828,16 @@ export async function runEmbeddedAttempt(
             await params.onBlockReplyFlush();
           }
 
-          const compactionRetryWait = await waitForCompactionRetryWithAggregateTimeout({
-            waitForCompactionRetry,
-            abortable,
-            aggregateTimeoutMs: COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS,
-            isCompactionStillInFlight: isCompactionInFlight,
-          });
+          // Skip compaction wait when yield aborted the run — the signal is
+          // already tripped and abortable() would immediately reject.
+          const compactionRetryWait = yieldDetected
+            ? { timedOut: false }
+            : await waitForCompactionRetryWithAggregateTimeout({
+                waitForCompactionRetry,
+                abortable,
+                aggregateTimeoutMs: COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS,
+                isCompactionStillInFlight: isCompactionInFlight,
+              });
           if (compactionRetryWait.timedOut) {
             timedOutDuringCompaction = true;
             if (!isProbeSession) {
