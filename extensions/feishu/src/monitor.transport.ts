@@ -209,11 +209,14 @@ export async function monitorWebhook({
 
     const handleAbort = () => {
       log(`feishu[${accountId}]: abort signal received, leaving Webhook server on ${serverKey}`);
+      // Settle `ready` so concurrent joiners awaiting it do not hang forever.
+      rejectReady(new Error("aborted"));
       removeOwnRoute();
       resolve();
     };
 
     if (abortSignal?.aborted) {
+      rejectReady(new Error("aborted"));
       removeOwnRoute();
       resolve();
       return;
@@ -312,17 +315,15 @@ function createPoolDispatcher(entry: WebhookServerEntry) {
     }
 
     // Apply lightweight request guards *before* buffering the body so that
-    // invalid-method / non-JSON / rate-limited requests are rejected without
-    // consuming socket and memory resources.  Uses a pool-scoped rate-limit
-    // key; per-account rate limiting still runs inside createGuardedHandler.
-    const remoteAddr = req.socket.remoteAddress ?? "unknown";
+    // invalid-method / non-JSON requests are rejected without consuming socket
+    // and memory resources.  Rate limiting is intentionally omitted here — each
+    // routed account's createGuardedHandler applies its own per-account limit.
+    // A pool-wide per-IP limit would cap aggregate traffic from one IP across
+    // all accounts at a single-account threshold, rejecting legitimate events.
     if (
       !applyBasicWebhookRequestGuards({
         req,
         res,
-        rateLimiter: feishuWebhookRateLimiter,
-        rateLimitKey: `pool:${remoteAddr}`,
-        nowMs: Date.now(),
         requireJsonContentType: true,
       })
     ) {
