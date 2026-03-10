@@ -23,6 +23,8 @@ export type WebhookRoute = {
 export type WebhookServerEntry = {
   server: http.Server;
   routes: Map<string, WebhookRoute>; // accountId → route
+  /** Resolves once server.listen() succeeds; rejects on bind failure. */
+  ready: Promise<void>;
 };
 export const webhookServerPool = new Map<string, WebhookServerEntry>();
 

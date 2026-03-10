@@ -91,9 +91,10 @@ export async function monitorWebhook({
 
   const webhookHandler = Lark.adaptDefault(path, eventDispatcher, { autoChallenge: true });
 
-  // Re-use existing server when another account already listens on the same host:port.
-  const existing = webhookServerPool.get(serverKey);
-  if (existing) {
+  // ---------------------------------------------------------------------------
+  // Helper: join an existing pooled server that is ready (or becoming ready).
+  // ---------------------------------------------------------------------------
+  const joinExistingServer = (existing: WebhookServerEntry): Promise<void> => {
     existing.routes.set(accountId, {
       accountId,
       appId: account.appId?.trim() ?? "",
@@ -125,13 +126,49 @@ export async function monitorWebhook({
       }
       abortSignal?.addEventListener("abort", handleAbort, { once: true });
     });
+  };
+
+  // ---------------------------------------------------------------------------
+  // Try to re-use an existing server on the same host:port.
+  // The pool entry is published *before* listen() completes (reservation) so
+  // concurrent starters coalesce on the same entry.  Joiners await
+  // `entry.ready` and fall through to create a new server if listen fails.
+  // ---------------------------------------------------------------------------
+  const existing = webhookServerPool.get(serverKey);
+  if (existing) {
+    try {
+      await existing.ready;
+    } catch {
+      // Creator's listen failed; the pool entry has been cleaned up.
+      // Fall through to create a fresh server below.
+      log(`feishu[${accountId}]: shared server on ${serverKey} failed to start, creating new`);
+    }
+    // Re-check: the pool entry may have been removed by the creator's error handler.
+    const current = webhookServerPool.get(serverKey);
+    if (current === existing) {
+      return joinExistingServer(existing);
+    }
+    // else: fall through to create a new server.
   }
 
+  // ---------------------------------------------------------------------------
   // First account on this host:port — create a new pooled server.
+  // Publish the pool entry immediately (reservation) so concurrent starters
+  // see it and await `ready` instead of creating duplicate servers.
+  // ---------------------------------------------------------------------------
   log(`feishu[${accountId}]: starting Webhook server on ${host}:${port}, path ${path}...`);
   const server = http.createServer();
+
+  let resolveReady!: () => void;
+  let rejectReady!: (err: unknown) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
   const entry: WebhookServerEntry = {
     server,
+    ready,
     routes: new Map([
       [
         accountId,
@@ -150,6 +187,10 @@ export async function monitorWebhook({
       ],
     ]),
   };
+  // Publish reservation before listen so concurrent starters coalesce.
+  webhookServerPool.set(serverKey, entry);
+  httpServers.set(accountId, server);
+
   server.on("request", createPoolDispatcher(entry));
 
   return new Promise((resolve, reject) => {
@@ -173,8 +214,7 @@ export async function monitorWebhook({
     };
 
     if (abortSignal?.aborted) {
-      // Server never entered the pool — just close it.
-      server.close();
+      removeOwnRoute();
       resolve();
       return;
     }
@@ -182,17 +222,15 @@ export async function monitorWebhook({
     abortSignal?.addEventListener("abort", handleAbort, { once: true });
 
     server.listen(port, host, () => {
-      // Publish the pool entry only after the server is successfully bound.
-      // This prevents joiners from attaching to a server that may never listen.
-      webhookServerPool.set(serverKey, entry);
-      httpServers.set(accountId, server);
+      resolveReady();
       log(`feishu[${accountId}]: Webhook server listening on ${host}:${port}`);
     });
 
     server.on("error", (err) => {
       error(`feishu[${accountId}]: Webhook server error: ${err}`);
+      // Signal pending joiners that this server will not start.
+      rejectReady(err);
       // Clean pool state so the next restart does not join a dead server.
-      // The pool entry may or may not have been set (listen may not have fired).
       server.close();
       webhookServerPool.delete(serverKey);
       for (const aid of entry.routes.keys()) {
@@ -270,6 +308,24 @@ function createPoolDispatcher(entry: WebhookServerEntry) {
     if (entry.routes.size === 1) {
       const route = entry.routes.values().next().value;
       if (route) route.handler(req, res);
+      return;
+    }
+
+    // Apply lightweight request guards *before* buffering the body so that
+    // invalid-method / non-JSON / rate-limited requests are rejected without
+    // consuming socket and memory resources.  Uses a pool-scoped rate-limit
+    // key; per-account rate limiting still runs inside createGuardedHandler.
+    const remoteAddr = req.socket.remoteAddress ?? "unknown";
+    if (
+      !applyBasicWebhookRequestGuards({
+        req,
+        res,
+        rateLimiter: feishuWebhookRateLimiter,
+        rateLimitKey: `pool:${remoteAddr}`,
+        nowMs: Date.now(),
+        requireJsonContentType: true,
+      })
+    ) {
       return;
     }
 
