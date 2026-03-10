@@ -1,6 +1,10 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import type { CliDeps } from "../cli/deps.js";
 import { createOutboundSendDeps } from "../cli/outbound-send-deps.js";
+import { backupCreateCommand } from "../commands/backup.js";
 import { loadConfig } from "../config/config.js";
 import {
   canonicalizeMainSessionAlias,
@@ -29,6 +33,7 @@ import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { resolveHomeDir, resolveUserPath } from "../utils.js";
 
 export type GatewayCronState = {
   cron: CronService;
@@ -37,6 +42,102 @@ export type GatewayCronState = {
 };
 
 const CRON_WEBHOOK_TIMEOUT_MS = 10_000;
+const CRON_BACKUP_OUTPUT_DIRNAME = "Backups";
+
+function isPathWithinBase(baseDir: string, candidate: string): boolean {
+  const relative = path.relative(baseDir, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function ensureCronBackupBaseSafe(baseDir: string): Promise<string> {
+  await fs.mkdir(baseDir, { recursive: true });
+  const stat = await fs.lstat(baseDir);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`cron backup output must stay within ~/${CRON_BACKUP_OUTPUT_DIRNAME}`);
+  }
+  return await fs.realpath(baseDir);
+}
+
+async function ensureCronBackupParentSafe(
+  baseDir: string,
+  baseRealDir: string,
+  parentDir: string,
+): Promise<void> {
+  const normalizedBase = path.resolve(baseDir);
+  const normalizedParent = path.resolve(parentDir);
+  if (!isPathWithinBase(normalizedBase, normalizedParent)) {
+    throw new Error(`cron backup output must stay within ~/${CRON_BACKUP_OUTPUT_DIRNAME}`);
+  }
+  const relative = path.relative(normalizedBase, normalizedParent);
+  if (!relative) {
+    return;
+  }
+
+  let current = normalizedBase;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    const next = path.join(current, segment);
+    let stat: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+    try {
+      stat = await fs.lstat(next);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code !== "ENOENT") {
+        throw err;
+      }
+      try {
+        await fs.mkdir(next);
+      } catch (mkdirErr) {
+        const mkdirCode = (mkdirErr as NodeJS.ErrnoException | undefined)?.code;
+        // Another concurrent backup run may create the same segment first.
+        if (mkdirCode !== "EEXIST") {
+          throw mkdirErr;
+        }
+      }
+      stat = await fs.lstat(next);
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`cron backup output must stay within ~/${CRON_BACKUP_OUTPUT_DIRNAME}`);
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`cron backup output parent must be a directory: ${next}`);
+    }
+    const realCurrent = await fs.realpath(next);
+    if (!isPathWithinBase(baseRealDir, realCurrent)) {
+      throw new Error(`cron backup output must stay within ~/${CRON_BACKUP_OUTPUT_DIRNAME}`);
+    }
+    current = next;
+  }
+}
+
+async function resolveCronBackupOutput(rawOutput?: string): Promise<string> {
+  const homeDir = resolveHomeDir() ?? os.homedir();
+  const baseDir = path.resolve(homeDir, CRON_BACKUP_OUTPUT_DIRNAME);
+  const trimmed = rawOutput?.trim();
+  const appendTrailingSeparator = (target: string) => `${target}${path.sep}`;
+  const baseRealDir = await ensureCronBackupBaseSafe(baseDir);
+
+  if (!trimmed) {
+    return appendTrailingSeparator(baseDir);
+  }
+
+  const candidate =
+    trimmed.startsWith("~") || path.isAbsolute(trimmed)
+      ? resolveUserPath(trimmed)
+      : path.resolve(baseDir, trimmed);
+
+  if (!isPathWithinBase(baseDir, candidate)) {
+    throw new Error(`cron backup output must stay within ~/${CRON_BACKUP_OUTPUT_DIRNAME}`);
+  }
+
+  const treatAsDirectory = candidate === baseDir || trimmed.endsWith("/") || trimmed.endsWith("\\");
+  const parentDir = treatAsDirectory ? candidate : path.dirname(candidate);
+  await ensureCronBackupParentSafe(baseDir, baseRealDir, parentDir);
+
+  if (treatAsDirectory) {
+    return appendTrailingSeparator(candidate);
+  }
+  return candidate;
+}
 
 function trimToOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -294,6 +395,55 @@ export function buildGatewayCronService(params: {
         sessionKey: `cron:${job.id}`,
         lane: "cron",
       });
+    },
+    runBackupJob: async ({ job, abortSignal }) => {
+      if (job.payload.kind !== "backupCreate") {
+        return { status: "error", error: 'cron backup jobs require payload.kind="backupCreate"' };
+      }
+
+      const output = await resolveCronBackupOutput(job.payload.output);
+      const result = await backupCreateCommand(
+        {
+          log: (...args: unknown[]) => {
+            const message = args.map((arg) => String(arg)).join(" ");
+            cronLogger.info({ jobId: job.id, message }, "cron: backup log");
+          },
+          error: (...args: unknown[]) => {
+            const message = args.map((arg) => String(arg)).join(" ");
+            cronLogger.warn({ jobId: job.id, message }, "cron: backup warning");
+          },
+          exit: (code: number) => {
+            throw new Error(`backup runtime exited with code ${code}`);
+          },
+        },
+        {
+          output,
+          includeWorkspace: job.payload.includeWorkspace,
+          onlyConfig: job.payload.onlyConfig,
+          verify: job.payload.verify,
+          signal: abortSignal,
+        },
+      );
+
+      const scope = result.onlyConfig
+        ? "config backup"
+        : result.includeWorkspace
+          ? "backup"
+          : "backup (no workspace)";
+      cronLogger.info(
+        {
+          jobId: job.id,
+          scope,
+          verified: result.verified,
+          assetCount: result.assets.length,
+          skippedCount: result.skipped.length,
+        },
+        "cron: backup completed",
+      );
+      return {
+        status: "ok",
+        summary: `${scope} created${result.verified ? " (verified)" : ""}`,
+      };
     },
     sendCronFailureAlert: async ({ job, text, channel, to, mode, accountId }) => {
       const { agentId, cfg: runtimeConfig } = resolveCronAgent(job.agentId);

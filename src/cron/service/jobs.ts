@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { CRON_BACKUP_CREATE_KIND } from "../backup-payload.js";
 import { parseAbsoluteTimeMs } from "../parse.js";
 import {
   coerceFiniteScheduleNumber,
@@ -34,6 +35,10 @@ import type { CronServiceState } from "./state.js";
 
 const STUCK_RUN_MS = 2 * 60 * 60 * 1000;
 const STAGGER_OFFSET_CACHE_MAX = 4096;
+const MIN_BACKUP_CREATE_INTERVAL_MS = 60 * 60_000;
+const CRON_GAP_LOOKBACK_MS = 366 * 24 * 60 * 60_000;
+const CRON_GAP_HORIZON_MS = 8 * 366 * 24 * 60 * 60_000;
+const CRON_GAP_MAX_SAMPLES = 100_000;
 const staggerOffsetCache = new Map<string, number>();
 
 function isFiniteTimestamp(value: unknown): value is number {
@@ -132,11 +137,69 @@ function resolveEveryAnchorMs(params: {
 }
 
 export function assertSupportedJobSpec(job: Pick<CronJob, "sessionTarget" | "payload">) {
-  if (job.sessionTarget === "main" && job.payload.kind !== "systemEvent") {
-    throw new Error('main cron jobs require payload.kind="systemEvent"');
+  if (
+    job.sessionTarget === "main" &&
+    job.payload.kind !== "systemEvent" &&
+    job.payload.kind !== CRON_BACKUP_CREATE_KIND
+  ) {
+    throw new Error('main cron jobs require payload.kind="systemEvent" or "backupCreate"');
   }
   if (job.sessionTarget === "isolated" && job.payload.kind !== "agentTurn") {
     throw new Error('isolated cron jobs require payload.kind="agentTurn"');
+  }
+}
+
+function computeCronScheduleGapMs(schedule: Extract<CronJob["schedule"], { kind: "cron" }>) {
+  const windowStartMs = Math.max(0, Date.now() - CRON_GAP_LOOKBACK_MS);
+  const windowEndMs = windowStartMs + CRON_GAP_HORIZON_MS;
+  let previousRunAtMs = computeNextRunAtMs(schedule, Math.max(0, windowStartMs - 1));
+  if (!isFiniteTimestamp(previousRunAtMs)) {
+    return undefined;
+  }
+  let minimumGapMs: number | undefined;
+  let cursorMs = previousRunAtMs + 1;
+
+  for (
+    let sample = 0;
+    sample < CRON_GAP_MAX_SAMPLES && previousRunAtMs < windowEndMs;
+    sample += 1
+  ) {
+    const nextRunAtMs = computeNextRunAtMs(schedule, cursorMs);
+    if (!isFiniteTimestamp(nextRunAtMs)) {
+      break;
+    }
+    const gapMs = nextRunAtMs - previousRunAtMs;
+    if (gapMs > 0) {
+      minimumGapMs = minimumGapMs === undefined ? gapMs : Math.min(minimumGapMs, gapMs);
+      if (minimumGapMs < MIN_BACKUP_CREATE_INTERVAL_MS) {
+        return minimumGapMs;
+      }
+    }
+    previousRunAtMs = nextRunAtMs;
+    cursorMs = nextRunAtMs + 1;
+  }
+
+  return minimumGapMs;
+}
+
+function assertBackupCreateScheduleSafety(job: Pick<CronJob, "payload" | "schedule">) {
+  if (job.payload.kind !== CRON_BACKUP_CREATE_KIND) {
+    return;
+  }
+
+  if (job.schedule.kind === "every") {
+    const everyMs = coerceFiniteScheduleNumber(job.schedule.everyMs);
+    if (everyMs !== undefined && everyMs < MIN_BACKUP_CREATE_INTERVAL_MS) {
+      throw new Error("cron backupCreate jobs require a minimum interval of 1 hour");
+    }
+    return;
+  }
+
+  if (job.schedule.kind === "cron") {
+    const gapMs = computeCronScheduleGapMs(job.schedule);
+    if (gapMs !== undefined && gapMs < MIN_BACKUP_CREATE_INTERVAL_MS) {
+      throw new Error("cron backupCreate jobs must not run more frequently than once per hour");
+    }
   }
 }
 
@@ -552,6 +615,7 @@ export function createJob(state: CronServiceState, input: CronJobCreate): CronJo
     },
   };
   assertSupportedJobSpec(job);
+  assertBackupCreateScheduleSafety(job);
   assertMainSessionAgentId(job, state.deps.defaultAgentId);
   assertDeliverySupport(job);
   assertFailureDestinationSupport(job);
@@ -642,6 +706,7 @@ export function applyJobPatch(
     job.sessionKey = normalizeOptionalSessionKey((patch as { sessionKey?: unknown }).sessionKey);
   }
   assertSupportedJobSpec(job);
+  assertBackupCreateScheduleSafety(job);
   assertMainSessionAgentId(job, opts?.defaultAgentId);
   assertDeliverySupport(job);
   assertFailureDestinationSupport(job);
@@ -658,6 +723,26 @@ function mergeCronPayload(existing: CronPayload, patch: CronPayloadPatch): CronP
     }
     const text = typeof patch.text === "string" ? patch.text : existing.text;
     return { kind: "systemEvent", text };
+  }
+
+  if (patch.kind === CRON_BACKUP_CREATE_KIND) {
+    if (existing.kind !== CRON_BACKUP_CREATE_KIND) {
+      return buildPayloadFromPatch(patch);
+    }
+    const next: Extract<CronPayload, { kind: typeof CRON_BACKUP_CREATE_KIND }> = { ...existing };
+    if ("output" in patch) {
+      next.output = patch.output;
+    }
+    if ("includeWorkspace" in patch) {
+      next.includeWorkspace = patch.includeWorkspace;
+    }
+    if ("onlyConfig" in patch) {
+      next.onlyConfig = patch.onlyConfig;
+    }
+    if ("verify" in patch) {
+      next.verify = patch.verify;
+    }
+    return next;
   }
 
   if (existing.kind !== "agentTurn") {
@@ -745,6 +830,16 @@ function buildPayloadFromPatch(patch: CronPayloadPatch): CronPayload {
       throw new Error('cron.update payload.kind="systemEvent" requires text');
     }
     return { kind: "systemEvent", text: patch.text };
+  }
+
+  if (patch.kind === CRON_BACKUP_CREATE_KIND) {
+    return {
+      kind: CRON_BACKUP_CREATE_KIND,
+      output: patch.output,
+      includeWorkspace: patch.includeWorkspace,
+      onlyConfig: patch.onlyConfig,
+      verify: patch.verify,
+    };
   }
 
   if (typeof patch.message !== "string" || patch.message.length === 0) {
