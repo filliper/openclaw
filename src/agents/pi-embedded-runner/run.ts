@@ -91,6 +91,16 @@ const OVERLOAD_FAILOVER_BACKOFF_POLICY: BackoffPolicy = {
   factor: 2,
   jitter: 0.2,
 };
+// Rate-limit backoff is longer than overload but still bounded — we are
+// rotating to a different profile/model, not retrying the same one. A short
+// pause reduces thundering-herd pressure without stalling the run loop for
+// tens of seconds on each iteration.
+const RATE_LIMIT_FAILOVER_BACKOFF_POLICY: BackoffPolicy = {
+  initialMs: 1_000,
+  maxMs: 5_000,
+  factor: 2,
+  jitter: 0.2,
+};
 
 // Avoid Anthropic's refusal test token poisoning session transcripts.
 const ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL = "ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL";
@@ -747,6 +757,7 @@ export async function runEmbeddedPiAgent(
       let autoCompactionCount = 0;
       let runLoopIterations = 0;
       let overloadFailoverAttempts = 0;
+      let rateLimitFailoverAttempts = 0;
       const maybeMarkAuthProfileFailure = async (failure: {
         profileId?: string;
         reason?: AuthProfileFailureReason | null;
@@ -776,15 +787,26 @@ export async function runEmbeddedPiAgent(
         }
         return failoverReason;
       };
-      const maybeBackoffBeforeOverloadFailover = async (reason: FailoverReason | null) => {
-        if (reason !== "overloaded") {
+      const maybeBackoffBeforeFailover = async (reason: FailoverReason | null) => {
+        let delayMs: number;
+        if (reason === "overloaded") {
+          overloadFailoverAttempts += 1;
+          delayMs = computeBackoff(OVERLOAD_FAILOVER_BACKOFF_POLICY, overloadFailoverAttempts);
+          log.warn(
+            `overload backoff before failover for ${provider}/${modelId}: attempt=${overloadFailoverAttempts} delayMs=${delayMs}`,
+          );
+        } else if (reason === "rate_limit") {
+          rateLimitFailoverAttempts += 1;
+          // Cap the effective attempt so the delay plateaus at ~4s instead of
+          // climbing to maxMs on every subsequent failover.
+          const effectiveAttempt = Math.min(rateLimitFailoverAttempts, 3);
+          delayMs = computeBackoff(RATE_LIMIT_FAILOVER_BACKOFF_POLICY, effectiveAttempt);
+          log.warn(
+            `rate-limit backoff before failover for ${provider}/${modelId}: attempt=${rateLimitFailoverAttempts} delayMs=${delayMs}`,
+          );
+        } else {
           return;
         }
-        overloadFailoverAttempts += 1;
-        const delayMs = computeBackoff(OVERLOAD_FAILOVER_BACKOFF_POLICY, overloadFailoverAttempts);
-        log.warn(
-          `overload backoff before failover for ${provider}/${modelId}: attempt=${overloadFailoverAttempts} delayMs=${delayMs}`,
-        );
         try {
           await sleepWithAbort(delayMs, params.abortSignal);
         } catch (err) {
@@ -1249,7 +1271,7 @@ export async function runEmbeddedPiAgent(
               (await advanceAuthProfile())
             ) {
               logPromptFailoverDecision("rotate_profile");
-              await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
+              await maybeBackoffBeforeFailover(promptFailoverReason);
               continue;
             }
             const fallbackThinking = pickFallbackThinkingLevel({
@@ -1269,7 +1291,7 @@ export async function runEmbeddedPiAgent(
             if (fallbackConfigured && promptFailoverFailure) {
               const status = resolveFailoverStatus(promptFailoverReason ?? "unknown");
               logPromptFailoverDecision("fallback_model", { status });
-              await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
+              await maybeBackoffBeforeFailover(promptFailoverReason);
               throw new FailoverError(errorText, {
                 reason: promptFailoverReason ?? "unknown",
                 provider,
@@ -1378,12 +1400,12 @@ export async function runEmbeddedPiAgent(
             const rotated = await advanceAuthProfile();
             if (rotated) {
               logAssistantFailoverDecision("rotate_profile");
-              await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
+              await maybeBackoffBeforeFailover(assistantFailoverReason);
               continue;
             }
 
             if (fallbackConfigured) {
-              await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
+              await maybeBackoffBeforeFailover(assistantFailoverReason);
               // Prefer formatted error message (user-friendly) over raw errorMessage
               const message =
                 (lastAssistant
