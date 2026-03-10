@@ -14,6 +14,7 @@ import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { WizardPrompter, WizardSelectOption } from "../wizard/prompts.js";
 import { formatTokenK } from "./models/shared.js";
 import { OPENAI_CODEX_DEFAULT_MODEL } from "./openai-codex-model-default.js";
+import { clearStaleVllmDefaultModel } from "./vllm-default-model.js";
 import { promptAndConfigureVllm } from "./vllm-setup.js";
 
 const KEEP_VALUE = "__keep__";
@@ -345,13 +346,18 @@ export async function promptDefaultModel(
       );
       return {};
     }
-    const { config: nextConfig, modelRef } = await promptAndConfigureVllm({
+    const vllmSelection = await promptAndConfigureVllm({
       cfg,
       prompter: params.prompter,
       agentDir,
     });
 
-    return { model: modelRef, config: nextConfig };
+    if (!vllmSelection.modelRef) {
+      const nextConfig = clearStaleVllmDefaultModel(vllmSelection.config);
+      return nextConfig === cfg ? {} : { config: nextConfig };
+    }
+
+    return { model: vllmSelection.modelRef, config: vllmSelection.config };
   }
   return { model: String(selection) };
 }

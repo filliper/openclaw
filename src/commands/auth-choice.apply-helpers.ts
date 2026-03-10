@@ -332,7 +332,11 @@ export function createAuthChoiceDefaultModelApplier(
       ...options,
     });
     state.config = applied.config;
-    state.agentModelOverride = applied.agentModelOverride ?? state.agentModelOverride;
+    if ("clearAgentModelOverride" in applied && applied.clearAgentModelOverride) {
+      state.agentModelOverride = undefined;
+    } else {
+      state.agentModelOverride = applied.agentModelOverride ?? state.agentModelOverride;
+    }
   };
 }
 
