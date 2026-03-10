@@ -515,6 +515,26 @@ async function finishPreparedManualRun(
   });
 }
 
+async function waitForManualRunCronLaneAdmission(
+  state: CronServiceState,
+  jobId: string,
+  runId: string,
+): Promise<void> {
+  // Isolated manual runs still execute inside the global cron lane when they
+  // reach runEmbeddedPiAgent(). Wait for one cron-lane turn before starting
+  // timeout accounting so a busy cron lane does not burn timeoutSeconds before
+  // the isolated run can even begin.
+  await enqueueCommandInLane(CommandLane.Cron, async () => undefined, {
+    warnAfterMs: 5_000,
+    onWait: (waitMs, queuedAhead) => {
+      state.deps.log.warn(
+        { jobId, runId, waitMs, queuedAhead },
+        "cron: queued manual run waiting for an execution slot",
+      );
+    },
+  });
+}
+
 export async function run(state: CronServiceState, id: string, mode?: "due" | "force") {
   const prepared = await prepareManualRun(state, id, mode);
   if (!prepared.ok || !prepared.ran) {
@@ -538,14 +558,21 @@ export async function enqueueRun(state: CronServiceState, id: string, mode?: "du
   void enqueueCommandInLane(
     manualDispatchLane,
     async () => {
-      const result = await run(state, id, mode);
-      if (result.ok && "ran" in result && !result.ran) {
-        state.deps.log.info(
-          { jobId: id, runId, reason: result.reason },
-          "cron: queued manual run skipped before execution",
-        );
+      const prepared = await prepareManualRun(state, id, mode);
+      if (!prepared.ok || !prepared.ran) {
+        if (prepared.ok && "ran" in prepared && !prepared.ran) {
+          state.deps.log.info(
+            { jobId: id, runId, reason: prepared.reason },
+            "cron: queued manual run skipped before execution",
+          );
+        }
+        return prepared;
       }
-      return result;
+      if (prepared.executionJob.sessionTarget === "isolated") {
+        await waitForManualRunCronLaneAdmission(state, id, runId);
+      }
+      await finishPreparedManualRun(state, prepared, mode);
+      return { ok: true, ran: true } as const;
     },
     {
       warnAfterMs: 5_000,

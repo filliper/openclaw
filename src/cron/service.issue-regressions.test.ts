@@ -1654,6 +1654,77 @@ describe("Cron issue regressions", () => {
     clearCommandLane(CommandLane.CronDispatch);
   });
 
+  it("starts manual isolated timeoutSeconds after cron lane admission", async () => {
+    vi.useRealTimers();
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+    setCommandLaneConcurrency(CommandLane.CronDispatch, 1);
+
+    const store = makeStorePath();
+    const dueAt = Date.parse("2026-02-06T10:05:05.000Z");
+    const job = createDueIsolatedJob({
+      id: "manual-timeout-after-admission",
+      nowMs: dueAt,
+      nextRunAtMs: dueAt,
+    });
+    if (job.payload.kind === "agentTurn") {
+      job.payload.timeoutSeconds = 0.03;
+    }
+    await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+    const blockingCronLaneStarted = createDeferred<void>();
+    const releaseBlockingCronLane = createDeferred<void>();
+    void enqueueCommandInLane(CommandLane.Cron, async () => {
+      blockingCronLaneStarted.resolve();
+      await releaseBlockingCronLane.promise;
+    });
+    await blockingCronLaneStarted.promise;
+
+    const isolatedStarted = createDeferred<void>();
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log: createNoopLogger(),
+      nowMs: () => dueAt,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: vi.fn(
+        async ({ abortSignal }: { abortSignal?: AbortSignal }) =>
+          await enqueueCommandInLane(CommandLane.Cron, async () => {
+            isolatedStarted.resolve();
+            if (abortSignal?.aborted) {
+              return {
+                status: "error" as const,
+                error:
+                  typeof abortSignal.reason === "string"
+                    ? abortSignal.reason
+                    : "cron: job execution timed out",
+              };
+            }
+            return { status: "ok" as const, summary: "done" };
+          }),
+      ),
+    });
+
+    const result = await enqueueRun(state, job.id, "force");
+    expect(result).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
+
+    setTimeout(() => {
+      releaseBlockingCronLane.resolve();
+    }, 40);
+
+    await isolatedStarted.promise;
+    await vi.waitFor(() => {
+      const storedJob = state.store?.jobs.find((entry) => entry.id === job.id);
+      expect(storedJob?.state.lastStatus).toBe("ok");
+      expect(storedJob?.state.lastError).toBeUndefined();
+    });
+
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+  });
+
   // Regression: isolated cron runs must not abort at 1/3 of configured timeoutSeconds.
   // The bug (issue #29774) caused the CLI-provider resume watchdog (ratio 0.3, maxMs 180 s)
   // to be applied on fresh sessions because a persisted cliSessionId was passed to
