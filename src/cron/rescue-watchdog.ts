@@ -125,8 +125,16 @@ async function waitForProfileGateway(params: {
   port: number;
   auth: { token?: string; password?: string };
   abortSignal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<{ healthy: boolean; detail?: string }> {
-  const deadlineAt = Date.now() + RECOVERY_WAIT_DEADLINE_MS;
+  const timeoutMs =
+    typeof params.timeoutMs === "number"
+      ? Math.max(0, params.timeoutMs)
+      : RECOVERY_WAIT_DEADLINE_MS;
+  if (timeoutMs <= 0) {
+    return { healthy: false, detail: "probe skipped because cron timeout budget was exhausted" };
+  }
+  const deadlineAt = Date.now() + timeoutMs;
   let lastDetail: string | undefined;
   while (Date.now() < deadlineAt) {
     if (params.abortSignal?.aborted) {
@@ -330,6 +338,15 @@ export async function runRescueWatchdogJob(params: {
     port,
     auth,
     abortSignal: params.abortSignal,
+    timeoutMs: (() => {
+      const remaining = resolveRemainingJobBudgetMs({
+        startedAtMs,
+        payload: params.job.payload,
+      });
+      return typeof remaining === "number"
+        ? Math.min(RECOVERY_WAIT_DEADLINE_MS, remaining)
+        : undefined;
+    })(),
   });
   if (restartProbe.healthy) {
     return {
@@ -376,6 +393,15 @@ export async function runRescueWatchdogJob(params: {
     port,
     auth,
     abortSignal: params.abortSignal,
+    timeoutMs: (() => {
+      const remaining = resolveRemainingJobBudgetMs({
+        startedAtMs,
+        payload: params.job.payload,
+      });
+      return typeof remaining === "number"
+        ? Math.min(RECOVERY_WAIT_DEADLINE_MS, remaining)
+        : undefined;
+    })(),
   });
   if (doctorProbe.healthy) {
     return {

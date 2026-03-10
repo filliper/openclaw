@@ -378,4 +378,37 @@ describe("runRescueWatchdogJob", () => {
     expect(result.error).toContain("service restart aborted");
     expect(runCommandWithTimeout).not.toHaveBeenCalled();
   });
+
+  it("clips post-repair probe wait to the remaining timeout budget", async () => {
+    probeGateway.mockResolvedValue({
+      ok: false,
+      close: { code: 1006, reason: "down" },
+      error: "down",
+    });
+    restartService.mockImplementation(() => new Promise<void>(() => {}));
+
+    let settled = false;
+    const runPromise = runRescueWatchdogJob({
+      job: {
+        id: "job-post-repair-probe-budget",
+        name: "rescue",
+        payload: {
+          kind: "rescueWatchdog",
+          monitoredProfile: "work",
+          timeoutSeconds: 47,
+        },
+      } as never,
+      monitoredProfile: "work",
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await vi.advanceTimersByTimeAsync(52_000);
+    expect(settled).toBe(true);
+    const result = await runPromise;
+
+    expect(result.status).toBe("error");
+    expect(runCommandWithTimeout).toHaveBeenCalledTimes(1);
+  });
 });
