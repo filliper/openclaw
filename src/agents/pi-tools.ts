@@ -57,6 +57,10 @@ import {
   mergeAlsoAllowPolicy,
   resolveToolProfilePolicy,
 } from "./tool-policy.js";
+import {
+  createSessionMemoryRecallTool,
+  createSessionMemorySignalTool,
+} from "./tools/session-memory-tool.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
 function isOpenAIProvider(provider?: string) {
@@ -268,6 +272,11 @@ export function createOpenClawCodingTools(options?: {
   disableMessageTool?: boolean;
   /** Whether the sender is an owner (required for owner-only tools). */
   senderIsOwner?: boolean;
+  /** Internal per-run tool policy override applied after normal policy resolution. */
+  toolPolicyOverride?: {
+    allow?: string[];
+    deny?: string[];
+  };
 }): AnyAgentTool[] {
   const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
@@ -309,6 +318,7 @@ export function createOpenClawCodingTools(options?: {
   });
   const profilePolicy = resolveToolProfilePolicy(profile);
   const providerProfilePolicy = resolveToolProfilePolicy(providerProfile);
+  const overridePolicy = options?.toolPolicyOverride;
 
   const profilePolicyWithAlsoAllow = mergeAlsoAllowPolicy(profilePolicy, profileAlsoAllow);
   const providerProfilePolicyWithAlsoAllow = mergeAlsoAllowPolicy(
@@ -336,6 +346,7 @@ export function createOpenClawCodingTools(options?: {
     groupPolicy,
     sandbox?.tools,
     subagentPolicy,
+    overridePolicy,
   ]);
   const execConfig = resolveExecConfig({ cfg: options?.config, agentId });
   const fsConfig = resolveToolFsConfig({ cfg: options?.config, agentId });
@@ -490,6 +501,19 @@ export function createOpenClawCodingTools(options?: {
     processTool as unknown as AnyAgentTool,
     // Channel docking: include channel-defined agent tools (login, etc.).
     ...listChannelAgentTools({ cfg: options?.config }),
+    // Session memory: recall and signal tools (null when sanitization is disabled).
+    ...[
+      createSessionMemoryRecallTool({
+        config: options?.config,
+        agentId: agentId ?? "",
+        sessionId: options?.sessionId,
+      }),
+      createSessionMemorySignalTool({
+        config: options?.config,
+        agentId: agentId ?? "",
+        sessionId: options?.sessionId,
+      }),
+    ].filter((t): t is AnyAgentTool => t !== null),
     ...createOpenClawTools({
       sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
       allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
@@ -521,6 +545,7 @@ export function createOpenClawCodingTools(options?: {
         groupPolicy,
         sandbox?.tools,
         subagentPolicy,
+        overridePolicy,
       ]),
       currentChannelId: options?.currentChannelId,
       currentThreadTs: options?.currentThreadTs,
@@ -588,6 +613,7 @@ export function createOpenClawCodingTools(options?: {
       }),
       { policy: sandbox?.tools, label: "sandbox tools.allow" },
       { policy: subagentPolicy, label: "subagent tools.allow" },
+      { policy: overridePolicy, label: "run tool policy override" },
     ],
   });
   // Always normalize tool JSON Schemas before handing them to pi-agent/pi-ai.
