@@ -451,21 +451,58 @@ export async function runProviderEntry(params: {
       timeoutMs,
     });
     const provider = getMediaUnderstandingProvider(providerId, params.providerRegistry);
-    const imageInput = {
-      buffer: media.buffer,
-      fileName: media.fileName,
-      mime: media.mime,
-      model: modelId,
-      provider: providerId,
-      prompt,
-      timeoutMs,
-      profile: entry.profile,
-      preferredProfile: entry.preferredProfile,
-      agentDir: params.agentDir,
-      cfg: params.cfg,
-    };
-    const describeImage = provider?.describeImage ?? describeImageWithModel;
-    const result = await describeImage(imageInput);
+
+    // Check if this is a plugin provider (has describeImage directly)
+    const isPluginProvider = !!provider?.describeImage;
+    let result: { text: string; model?: string };
+
+    if (isPluginProvider && provider?.describeImage) {
+      // For plugin providers, pass request with apiKey (plugins get credentials from config/env)
+      // Cast to any since plugin type differs from core type
+      result = await (
+        provider.describeImage as (req: {
+          buffer: Buffer;
+          fileName: string;
+          mime?: string;
+          model: string;
+          provider: string;
+          prompt?: string;
+          timeoutMs: number;
+          profile?: string;
+          preferredProfile?: string;
+          agentDir: string;
+          apiKey?: string;
+        }) => Promise<{ text: string; model?: string }>
+      )({
+        buffer: media.buffer,
+        fileName: media.fileName,
+        mime: media.mime,
+        model: modelId,
+        provider: providerId,
+        prompt,
+        timeoutMs,
+        profile: entry.profile,
+        preferredProfile: entry.preferredProfile,
+        agentDir: params.agentDir,
+        apiKey: "", // Plugins should get credentials from config or environment
+      });
+    } else {
+      // Built-in provider uses cfg
+      const imageInput = {
+        buffer: media.buffer,
+        fileName: media.fileName,
+        mime: media.mime,
+        model: modelId,
+        provider: providerId,
+        prompt,
+        timeoutMs,
+        profile: entry.profile,
+        preferredProfile: entry.preferredProfile,
+        agentDir: params.agentDir,
+        cfg: params.cfg,
+      };
+      result = await describeImageWithModel(imageInput);
+    }
     return {
       kind: "image.description",
       attachmentIndex: params.attachmentIndex,

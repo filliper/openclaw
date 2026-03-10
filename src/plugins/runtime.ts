@@ -42,9 +42,8 @@ export function setActivePluginRegistry(registry: PluginRegistry, cacheKey?: str
   state.registry = registry;
   state.key = cacheKey ?? null;
   state.version += 1;
-  void invalidatePluginCaches();
-  // Populate media caches eagerly when plugins are loaded
-  void populateMediaProviderCaches();
+  // Chain invalidation and population to avoid race conditions
+  void invalidatePluginCaches().then(() => populateMediaProviderCaches());
 }
 
 async function populateMediaProviderCaches(): Promise<void> {
