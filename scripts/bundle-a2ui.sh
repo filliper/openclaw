@@ -86,6 +86,11 @@ if [[ -f "$HASH_FILE" ]]; then
 fi
 
 pnpm -s exec tsc -p "$A2UI_RENDERER_DIR/tsconfig.json"
-pnpm -s exec rolldown -c "$A2UI_APP_DIR/rolldown.config.mjs"
+ROLLDOWN_CLI="$(find "$ROOT_DIR/node_modules/.pnpm" -path '*/node_modules/rolldown/bin/cli.mjs' -print -quit 2>/dev/null || true)"
+if [[ -z "$ROLLDOWN_CLI" ]]; then
+  echo "Unable to find installed rolldown CLI under $ROOT_DIR/node_modules/.pnpm" >&2
+  exit 1
+fi
+node "$ROLLDOWN_CLI" -c "$A2UI_APP_DIR/rolldown.config.mjs"
 
 echo "$current_hash" > "$HASH_FILE"
