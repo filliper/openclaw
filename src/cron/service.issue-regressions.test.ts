@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HeartbeatRunResult } from "../infra/heartbeat-wake.js";
 import {
   clearCommandLane,
@@ -44,6 +44,12 @@ const FAST_TIMEOUT_SECONDS = 0.0025;
 
 describe("Cron issue regressions", () => {
   const { makeStorePath } = setupCronIssueRegressionFixtures();
+
+  afterEach(() => {
+    clearCommandLane(CommandLane.Cron);
+    clearCommandLane(CommandLane.CronDispatch);
+    resetAllLanes();
+  });
 
   it("covers schedule updates and payload patching", async () => {
     const store = makeStorePath();
@@ -1608,7 +1614,7 @@ describe("Cron issue regressions", () => {
     clearCommandLane(CommandLane.CronDispatch);
   });
 
-  it("clears reserved isolated manual runs when post-prepare enqueue is rejected", async () => {
+  it("does not reserve isolated manual runs when cron admission enqueue is rejected", async () => {
     vi.useRealTimers();
     clearCommandLane(CommandLane.Cron);
     clearCommandLane(CommandLane.CronDispatch);
@@ -1652,17 +1658,13 @@ describe("Cron issue regressions", () => {
     await vi.waitFor(() => {
       const storedJob = state.store?.jobs.find((entry) => entry.id === job.id);
       expect(storedJob?.state.runningAtMs).toBeUndefined();
-      expect(storedJob?.state.lastStatus).toBe("error");
-      expect(storedJob?.state.lastError).toContain("Gateway is draining");
+      expect(storedJob?.state.lastStatus).toBeUndefined();
+      expect(storedJob?.state.lastError).toBeUndefined();
     });
     await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
-
-    resetAllLanes();
-    clearCommandLane(CommandLane.Cron);
-    clearCommandLane(CommandLane.CronDispatch);
   });
 
-  it("clears reserved main-target manual runs when post-prepare enqueue is rejected", async () => {
+  it("does not reserve main-target manual runs when cron enqueue is rejected", async () => {
     vi.useRealTimers();
     clearCommandLane(CommandLane.Cron);
     clearCommandLane(CommandLane.CronDispatch);
@@ -1714,14 +1716,10 @@ describe("Cron issue regressions", () => {
     await vi.waitFor(() => {
       const storedJob = state.store?.jobs.find((entry) => entry.id === job.id);
       expect(storedJob?.state.runningAtMs).toBeUndefined();
-      expect(storedJob?.state.lastStatus).toBe("error");
-      expect(storedJob?.state.lastError).toContain("Gateway is draining");
+      expect(storedJob?.state.lastStatus).toBeUndefined();
+      expect(storedJob?.state.lastError).toBeUndefined();
     });
     await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
-
-    resetAllLanes();
-    clearCommandLane(CommandLane.Cron);
-    clearCommandLane(CommandLane.CronDispatch);
   });
 
   it("does not deadlock manual isolated runs when the isolated executor re-enters the cron lane", async () => {
@@ -1749,8 +1747,8 @@ describe("Cron issue regressions", () => {
       enqueueSystemEvent: vi.fn(),
       requestHeartbeatNow: vi.fn(),
       runIsolatedAgentJob: vi.fn(
-        async () =>
-          await enqueueCommandInLane(CommandLane.Cron, async () => {
+        async ({ lane }: { lane?: string }) =>
+          await enqueueCommandInLane(lane ?? CommandLane.Cron, async () => {
             nestedCronLaneStarted.resolve();
             return { status: "ok" as const, summary: "done" };
           }),
@@ -1808,8 +1806,8 @@ describe("Cron issue regressions", () => {
       enqueueSystemEvent: vi.fn(),
       requestHeartbeatNow: vi.fn(),
       runIsolatedAgentJob: vi.fn(
-        async ({ abortSignal }: { abortSignal?: AbortSignal }) =>
-          await enqueueCommandInLane(CommandLane.Cron, async () => {
+        async ({ abortSignal, lane }: { abortSignal?: AbortSignal; lane?: string }) =>
+          await enqueueCommandInLane(lane ?? CommandLane.Cron, async () => {
             isolatedStarted.resolve();
             if (abortSignal?.aborted) {
               return {
@@ -1838,9 +1836,6 @@ describe("Cron issue regressions", () => {
       expect(storedJob?.state.lastStatus).toBe("ok");
       expect(storedJob?.state.lastError).toBeUndefined();
     });
-
-    clearCommandLane(CommandLane.Cron);
-    clearCommandLane(CommandLane.CronDispatch);
   });
 
   it("keeps manual main-target runs behind the cron execution limiter", async () => {
@@ -1907,9 +1902,6 @@ describe("Cron issue regressions", () => {
         sessionKey: undefined,
       });
     });
-
-    clearCommandLane(CommandLane.Cron);
-    clearCommandLane(CommandLane.CronDispatch);
   });
 
   // Regression: isolated cron runs must not abort at 1/3 of configured timeoutSeconds.

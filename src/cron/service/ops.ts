@@ -1,8 +1,4 @@
-import {
-  CommandLaneClearedError,
-  enqueueCommandInLane,
-  GatewayDrainingError,
-} from "../../process/command-queue.js";
+import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "../types.js";
 import { normalizeCronCreateDeliveryInput } from "./initial-delivery.js";
@@ -516,41 +512,64 @@ async function finishPreparedManualRun(
   state: CronServiceState,
   prepared: Extract<PreparedManualRun, { ran: true }>,
   mode?: "due" | "force",
+  opts?: { isolatedExecutionLane?: string },
 ): Promise<void> {
   const executionJob = prepared.executionJob;
 
   let coreResult: Awaited<ReturnType<typeof executeJobCoreWithTimeout>>;
   try {
-    coreResult = await executeJobCoreWithTimeout(state, executionJob);
+    coreResult = await executeJobCoreWithTimeout(state, executionJob, {
+      isolatedLane:
+        executionJob.sessionTarget === "isolated" ? opts?.isolatedExecutionLane : undefined,
+    });
   } catch (err) {
     coreResult = { status: "error", error: String(err) };
   }
   await finalizePreparedManualRun(state, prepared, mode, coreResult);
 }
 
-function isManualRunFollowupEnqueueError(err: unknown): boolean {
-  return err instanceof GatewayDrainingError || err instanceof CommandLaneClearedError;
-}
-
-
-
-async function waitForManualRunCronLaneAdmission(
-  state: CronServiceState,
-  jobId: string,
-  runId: string,
-): Promise<void> {
-  // Isolated manual runs still execute inside the global cron lane when they
-  // reach runEmbeddedPiAgent(). Wait for one cron-lane turn before starting
-  // timeout accounting so a busy cron lane does not burn timeoutSeconds before
-  // the isolated run can even begin.
-  await enqueueCommandInLane(CommandLane.Cron, async () => undefined, {
+function createQueuedManualRunLaneOpts(state: CronServiceState, id: string, runId: string) {
+  return {
     warnAfterMs: 5_000,
-    onWait: (waitMs, queuedAhead) => {
+    onWait: (waitMs: number, queuedAhead: number) => {
       state.deps.log.warn(
-        { jobId, runId, waitMs, queuedAhead },
+        { jobId: id, runId, waitMs, queuedAhead },
         "cron: queued manual run waiting for an execution slot",
       );
     },
+  } as const;
+}
+
+function queueManualRunExecution(
+  state: CronServiceState,
+  id: string,
+  runId: string,
+  mode: "due" | "force" | undefined,
+  opts?: { isolatedExecutionLane?: string },
+): void {
+  const laneOpts = createQueuedManualRunLaneOpts(state, id, runId);
+  void enqueueCommandInLane(
+    CommandLane.Cron,
+    async () => {
+      const prepared = await prepareManualRun(state, id, mode);
+      if (!prepared.ok || !prepared.ran) {
+        if (prepared.ok && "ran" in prepared && !prepared.ran) {
+          state.deps.log.info(
+            { jobId: id, runId, reason: prepared.reason },
+            "cron: queued manual run skipped before execution",
+          );
+        }
+        return prepared;
+      }
+      await finishPreparedManualRun(state, prepared, mode, opts);
+      return { ok: true, ran: true } as const;
+    },
+    laneOpts,
+  ).catch((err) => {
+    state.deps.log.error(
+      { jobId: id, runId, err: String(err) },
+      "cron: queued manual run background execution failed",
+    );
   });
 }
 
@@ -570,81 +589,25 @@ export async function enqueueRun(state: CronServiceState, id: string, mode?: "du
   }
 
   const runId = `manual:${id}:${state.deps.nowMs()}:${nextManualRunId++}`;
-  // Manual cron triggers run in the background, but isolated executions also
-  // re-enter the global "cron" lane inside runEmbeddedPiAgent(). Using that
-  // same lane here deadlocks manual isolated runs behind themselves.
   const manualDispatchLane = CommandLane.CronDispatch;
+  const dispatchLaneOpts = createQueuedManualRunLaneOpts(state, id, runId);
   void enqueueCommandInLane(
     manualDispatchLane,
     async () => {
       if (disposition.sessionTarget === "isolated") {
-        try {
-          await waitForManualRunCronLaneAdmission(state, id, runId);
-        } catch (err) {
-          if (isManualRunFollowupEnqueueError(err)) {
-            // Because we haven't prepared the run yet, we don't need a formal failure finalization,
-            // but we should log that it failed to acquire an admission slot.
-            state.deps.log.error(
-              { jobId: id, runId, err: String(err) },
-              "cron: queued manual isolated run failed to acquire cron lane admission",
-            );
-          }
-          throw err;
-        }
-
-        // Now that we have the slot, lock the job.
-        const prepared = await prepareManualRun(state, id, mode);
-        if (!prepared.ok || !prepared.ran) {
-          if (prepared.ok && "ran" in prepared && !prepared.ran) {
-            state.deps.log.info(
-              { jobId: id, runId, reason: prepared.reason },
-              "cron: queued manual run skipped before execution (isolated)",
-            );
-          }
-          return prepared;
-        }
-
-        await finishPreparedManualRun(state, prepared, mode);
-        return { ok: true, ran: true } as const;
-      }
-
-      try {
-        return await enqueueCommandInLane(CommandLane.Cron, async () => {
-          // Now that we have the slot, lock the job.
-          const prepared = await prepareManualRun(state, id, mode);
-          if (!prepared.ok || !prepared.ran) {
-            if (prepared.ok && "ran" in prepared && !prepared.ran) {
-              state.deps.log.info(
-                { jobId: id, runId, reason: prepared.reason },
-                "cron: queued manual run skipped before execution",
-              );
-            }
-            return prepared;
-          }
-
-          await finishPreparedManualRun(state, prepared, mode);
-          return { ok: true, ran: true } as const;
+        // Hold the cron execution slot for the whole isolated run so CLI-based
+        // providers cannot overlap other cron work, but route the embedded
+        // agent's internal global queue through cron-dispatch to avoid the
+        // original self-deadlock when it re-enters a lane during execution.
+        queueManualRunExecution(state, id, runId, mode, {
+          isolatedExecutionLane: CommandLane.CronDispatch,
         });
-      } catch (err) {
-        if (isManualRunFollowupEnqueueError(err)) {
-          // Again, no formal preparation to clean up, just log.
-          state.deps.log.error(
-            { jobId: id, runId, err: String(err) },
-            "cron: queued manual run failed to acquire cron lane payload slot",
-          );
-        }
-        throw err;
+        return { ok: true, enqueued: true, runId } as const;
       }
+      queueManualRunExecution(state, id, runId, mode);
+      return { ok: true, enqueued: true, runId } as const;
     },
-    {
-      warnAfterMs: 5_000,
-      onWait: (waitMs, queuedAhead) => {
-        state.deps.log.warn(
-          { jobId: id, runId, waitMs, queuedAhead },
-          "cron: queued manual run waiting for an execution slot",
-        );
-      },
-    },
+    dispatchLaneOpts,
   ).catch((err) => {
     state.deps.log.error(
       { jobId: id, runId, err: String(err) },
