@@ -60,16 +60,20 @@ export function resolveSpawnedWorkspaceInheritance(params: {
   config: OpenClawConfig;
   requesterSessionKey?: string;
   explicitWorkspaceDir?: string | null;
+  targetAgentId?: string;
 }): string | undefined {
   const explicit = normalizeOptionalText(params.explicitWorkspaceDir);
   if (explicit) {
     return explicit;
   }
-  const requesterAgentId = params.requesterSessionKey
-    ? parseAgentSessionKey(params.requesterSessionKey)?.agentId
-    : undefined;
-  return requesterAgentId
-    ? resolveAgentWorkspaceDir(params.config, normalizeAgentId(requesterAgentId))
+  // Prefer targetAgentId (target agent), fall back to requesterAgentId (caller) if not provided
+  const agentId = params.targetAgentId || (
+    params.requesterSessionKey
+      ? parseAgentSessionKey(params.requesterSessionKey)?.agentId
+      : undefined
+  );
+  return agentId
+    ? resolveAgentWorkspaceDir(params.config, normalizeAgentId(agentId))
     : undefined;
 }
 
