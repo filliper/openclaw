@@ -597,6 +597,31 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
   };
 }
 
+function isLikelyProviderErrorType(type?: string): boolean {
+  const normalized = type?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return normalized.endsWith("_error");
+}
+
+function shouldRewriteRawPayloadWithoutErrorContext(raw: string): boolean {
+  const info = parseApiErrorInfo(raw);
+  if (!info) {
+    return false;
+  }
+  if (isLikelyProviderErrorType(info.type)) {
+    return true;
+  }
+  if (info.httpCode) {
+    const parsedCode = Number(info.httpCode);
+    if (Number.isFinite(parsedCode) && parsedCode >= 400) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function formatRawAssistantErrorForUi(raw?: string): string {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) {
@@ -728,6 +753,14 @@ export function sanitizeUserFacingText(text: string, opts?: { errorContext?: boo
     return "";
   }
 
+  // Raw JSON API error payloads with strong provider-error signals should not
+  // reach the user even when the stream chunk was not flagged as `isError`.
+  // Keep this narrow to avoid clobbering legitimate assistant JSON output.
+  // (#42132)
+  if (shouldRewriteRawPayloadWithoutErrorContext(trimmed)) {
+    return formatRawAssistantErrorForUi(trimmed);
+  }
+
   // Only apply error-pattern rewrites when the caller knows this text is an error payload.
   // Otherwise we risk swallowing legitimate assistant text that merely *mentions* these errors.
   if (errorContext) {
@@ -749,7 +782,7 @@ export function sanitizeUserFacingText(text: string, opts?: { errorContext?: boo
       return BILLING_ERROR_USER_MESSAGE;
     }
 
-    if (isRawApiErrorPayload(trimmed) || isLikelyHttpErrorText(trimmed)) {
+    if (isLikelyHttpErrorText(trimmed)) {
       return formatRawAssistantErrorForUi(trimmed);
     }
 
