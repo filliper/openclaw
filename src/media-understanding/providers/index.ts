@@ -83,6 +83,39 @@ let pluginOverridesPromise: Promise<Record<string, MediaUnderstandingProvider>> 
 export function buildMediaUnderstandingRegistry(
   overrides?: Record<string, MediaUnderstandingProvider>,
 ): Map<string, MediaUnderstandingProvider> {
+  if (!cachedPluginOverrides && !pluginOverridesPromise) {
+    try {
+      const { requireActivePluginRegistry } = require("../../plugins/runtime.js");
+      const registry = requireActivePluginRegistry();
+      const pluginOverrides: Record<string, MediaUnderstandingProvider> = {};
+
+      for (const entry of registry.mediaProviders) {
+        const p = entry.provider;
+        const capabilitiesList = p.capabilities;
+        const capabilities = capabilitiesList
+          ?.map(mapCapability)
+          .filter(
+            (c: MediaUnderstandingCapability | undefined): c is MediaUnderstandingCapability =>
+              c !== undefined,
+          );
+        const hasCapabilities = capabilities && capabilities.length > 0;
+        const normalizedId = normalizeMediaProviderId(p.id);
+        const provider: MediaUnderstandingProvider = {
+          id: normalizedId,
+          capabilities: hasCapabilities ? capabilities : undefined,
+          transcribeAudio: p.transcribeAudio as MediaUnderstandingProvider["transcribeAudio"],
+          describeImage: p.describeImage as MediaUnderstandingProvider["describeImage"],
+          describeVideo: p.describeVideo as MediaUnderstandingProvider["describeVideo"],
+          textToSpeech: p.textToSpeech as MediaUnderstandingProvider["textToSpeech"],
+        };
+        pluginOverrides[normalizedId] = provider;
+      }
+      cachedPluginOverrides = pluginOverrides;
+    } catch {
+      // Plugins not available
+    }
+  }
+
   const registry = new Map<string, MediaUnderstandingProvider>();
   for (const provider of PROVIDERS) {
     registry.set(normalizeMediaProviderId(provider.id), provider);
