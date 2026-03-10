@@ -1,5 +1,6 @@
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
 import { normalizeProviderId } from "../model-selection.js";
+import { cleanupOAuthProfiles } from "./oauth-cleanup.js";
 import {
   ensureAuthProfileStore,
   saveAuthProfileStore,
@@ -61,6 +62,13 @@ export function upsertAuthProfile(params: {
         : params.credential;
   const store = ensureAuthProfileStore(params.agentDir);
   store.profiles[params.profileId] = credential;
+  if (credential.type === "oauth") {
+    cleanupOAuthProfiles({
+      store,
+      provider: credential.provider,
+      keepProfileIds: [params.profileId],
+    });
+  }
   saveAuthProfileStore(store, params.agentDir);
 }
 
@@ -73,6 +81,13 @@ export async function upsertAuthProfileWithLock(params: {
     agentDir: params.agentDir,
     updater: (store) => {
       store.profiles[params.profileId] = params.credential;
+      if (params.credential.type === "oauth") {
+        cleanupOAuthProfiles({
+          store,
+          provider: params.credential.provider,
+          keepProfileIds: [params.profileId],
+        });
+      }
       return true;
     },
   });
