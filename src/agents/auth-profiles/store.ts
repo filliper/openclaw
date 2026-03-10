@@ -79,6 +79,14 @@ export function clearRuntimeAuthProfileStoreSnapshots(): void {
 
 export async function updateAuthProfileStoreWithLock(params: {
   agentDir?: string;
+  /**
+   * When true, load only the agent-local store inside the lock instead of the
+   * merged (main + agent-local) view returned by ensureAuthProfileStore.
+   * Use for non-default agents when the write target is the agent-local file
+   * only, to prevent main-store profiles from being written into that file
+   * (credential scope bleed).
+   */
+  agentLocalOnly?: boolean;
   updater: (store: AuthProfileStore) => boolean;
 }): Promise<AuthProfileStore | null> {
   const authPath = resolveAuthStorePath(params.agentDir);
@@ -86,7 +94,9 @@ export async function updateAuthProfileStoreWithLock(params: {
 
   try {
     return await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
-      const store = ensureAuthProfileStore(params.agentDir);
+      const store = params.agentLocalOnly
+        ? loadAgentLocalAuthProfileStore(params.agentDir)
+        : ensureAuthProfileStore(params.agentDir);
       const shouldSave = params.updater(store);
       if (shouldSave) {
         saveAuthProfileStore(store, params.agentDir);
@@ -461,7 +471,7 @@ export function loadAuthProfileStoreForSecretsRuntime(agentDir?: string): AuthPr
 
 export function ensureAuthProfileStore(
   agentDir?: string,
-  options?: { allowKeychainPrompt?: boolean },
+  options?: { allowKeychainPrompt?: boolean; readOnly?: boolean },
 ): AuthProfileStore {
   const runtimeStore = resolveRuntimeAuthProfileStore(agentDir);
   if (runtimeStore) {
@@ -479,6 +489,22 @@ export function ensureAuthProfileStore(
   const merged = mergeAuthProfileStores(mainStore, store);
 
   return merged;
+}
+
+/**
+ * Load only the agent-local auth profile store, without merging with the main
+ * agent store. Use this when computing which profiles to delete: the clean
+ * command's write target is the agent-local file only, so profile IDs that
+ * exist exclusively in the main store must never appear in toRemove.
+ *
+ * Unlike ensureAuthProfileStore, this function does NOT merge the main store
+ * into the result for non-default agents.
+ */
+export function loadAgentLocalAuthProfileStore(
+  agentDir?: string,
+  options?: { allowKeychainPrompt?: boolean; readOnly?: boolean },
+): AuthProfileStore {
+  return loadAuthProfileStoreForAgent(agentDir, options);
 }
 
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
