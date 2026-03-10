@@ -59,15 +59,16 @@ async function getPluginMediaProviderOverrides(): Promise<
         ?.map(mapCapability)
         .filter((c): c is MediaUnderstandingCapability => c !== undefined);
       const hasCapabilities = capabilities && capabilities.length > 0;
+      const normalizedId = normalizeMediaProviderId(p.id);
       const provider: MediaUnderstandingProvider = {
-        id: p.id,
+        id: normalizedId,
         capabilities: hasCapabilities ? capabilities : undefined,
         transcribeAudio: p.transcribeAudio as MediaUnderstandingProvider["transcribeAudio"],
         describeImage: p.describeImage as MediaUnderstandingProvider["describeImage"],
         describeVideo: p.describeVideo as MediaUnderstandingProvider["describeVideo"],
         textToSpeech: p.textToSpeech as MediaUnderstandingProvider["textToSpeech"],
       };
-      overrides[p.id] = provider;
+      overrides[normalizedId] = provider;
     }
 
     return overrides;

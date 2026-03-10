@@ -210,6 +210,7 @@ export type MediaProviderTextToSpeechRequest = {
 export type MediaProviderTextToSpeechResult = {
   audio: Buffer;
   mime: string;
+  sampleRate?: number;
 };
 
 export type MediaProviderPlugin = {
