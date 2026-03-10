@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/feishu";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/feishu";
+import { registerFeishuAttachmentDownloadTools } from "./src/attachment-download.js";
 import { registerFeishuBitableTools } from "./src/bitable.js";
 import { feishuPlugin } from "./src/channel.js";
 import { registerFeishuChatTools } from "./src/chat.js";
@@ -59,6 +60,7 @@ const plugin = {
     registerFeishuDriveTools(api);
     registerFeishuPermTools(api);
     registerFeishuBitableTools(api);
+    registerFeishuAttachmentDownloadTools(api);
   },
 };
 
