@@ -806,6 +806,7 @@ export async function textToSpeechTelephony(params: {
           success: true,
           audioBuffer: result.audio,
           outputFormat: result.mime,
+          sampleRate: result.sampleRate,
           latencyMs: Date.now() - providerStart,
           provider,
         };

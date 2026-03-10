@@ -120,6 +120,7 @@ export type TextToSpeechRequest = {
 export type TextToSpeechResult = {
   audio: Buffer;
   mime: string;
+  sampleRate?: number;
 };
 
 export type MediaUnderstandingProvider = {
