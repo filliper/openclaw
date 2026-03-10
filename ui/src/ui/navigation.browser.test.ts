@@ -182,6 +182,9 @@ describe("control UI routing", () => {
     expect(JSON.parse(localStorage.getItem("openclaw.control.settings.v1") ?? "{}").token).toBe(
       undefined,
     );
+    expect(sessionStorage.getItem(`openclaw.control.token.v1:${app.settings.gatewayUrl}`)).toBe(
+      "abc123",
+    );
     expect(window.location.pathname).toBe("/ui/overview");
     expect(window.location.hash).toBe("");
   });
@@ -193,6 +196,9 @@ describe("control UI routing", () => {
     expect(app.settings.token).toBe("abc123");
     expect(JSON.parse(localStorage.getItem("openclaw.control.settings.v1") ?? "{}").token).toBe(
       undefined,
+    );
+    expect(sessionStorage.getItem(`openclaw.control.token.v1:${app.settings.gatewayUrl}`)).toBe(
+      "abc123",
     );
     expect(window.location.pathname).toBe("/ui/overview");
     expect(window.location.hash).toBe("");
