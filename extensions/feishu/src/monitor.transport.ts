@@ -150,9 +150,6 @@ export async function monitorWebhook({
       ],
     ]),
   };
-  webhookServerPool.set(serverKey, entry);
-  httpServers.set(accountId, server);
-
   server.on("request", createPoolDispatcher(entry));
 
   return new Promise((resolve, reject) => {
@@ -176,7 +173,8 @@ export async function monitorWebhook({
     };
 
     if (abortSignal?.aborted) {
-      removeOwnRoute();
+      // Server never entered the pool — just close it.
+      server.close();
       resolve();
       return;
     }
@@ -184,12 +182,17 @@ export async function monitorWebhook({
     abortSignal?.addEventListener("abort", handleAbort, { once: true });
 
     server.listen(port, host, () => {
+      // Publish the pool entry only after the server is successfully bound.
+      // This prevents joiners from attaching to a server that may never listen.
+      webhookServerPool.set(serverKey, entry);
+      httpServers.set(accountId, server);
       log(`feishu[${accountId}]: Webhook server listening on ${host}:${port}`);
     });
 
     server.on("error", (err) => {
       error(`feishu[${accountId}]: Webhook server error: ${err}`);
       // Clean pool state so the next restart does not join a dead server.
+      // The pool entry may or may not have been set (listen may not have fired).
       server.close();
       webhookServerPool.delete(serverKey);
       for (const aid of entry.routes.keys()) {
