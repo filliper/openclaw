@@ -60,6 +60,7 @@ import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
+import { smartRouter } from "../smart-router.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
 import { createFailoverDecisionLogger } from "./run/failover-observation.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
@@ -1502,6 +1503,12 @@ export async function runEmbeddedPiAgent(
               agentDir: params.agentDir,
             });
           }
+
+          // [Xiao Ke Fix] Actually log the real usage tokens into usage-stats.json after completion
+          if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+            smartRouter.incrementUsage(`${provider}/${modelId}`, usage.inputTokens, usage.outputTokens);
+          }
+
           return {
             payloads: payloads.length ? payloads : undefined,
             meta: {
