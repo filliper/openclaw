@@ -567,18 +567,16 @@ async function surfaceManualRunEnqueueFailure(
       return;
     }
 
-    const shouldDelete = applyJobResult(
-      state,
-      job,
-      {
-        status: "error",
-        error: errMessage,
-        delivered: false,
-        startedAt,
-        endedAt,
-      },
-      { preserveSchedule: true },
-    );
+    job.state.runningAtMs = undefined;
+    job.state.lastRunAtMs = startedAt;
+    job.state.lastRunStatus = "error";
+    job.state.lastStatus = "error";
+    job.state.lastDurationMs = Math.max(0, endedAt - startedAt);
+    job.state.lastError = errMessage;
+    job.state.lastErrorReason = undefined;
+    job.state.lastDeliveryStatus = "not-delivered";
+    job.state.lastDeliveryError = errMessage;
+    job.updatedAtMs = endedAt;
 
     emit(state, {
       jobId: job.id,
@@ -591,11 +589,6 @@ async function surfaceManualRunEnqueueFailure(
       deliveryStatus: job.state.lastDeliveryStatus,
       deliveryError: job.state.lastDeliveryError,
     });
-
-    if (shouldDelete && state.store) {
-      state.store.jobs = state.store.jobs.filter((entry) => entry.id !== job.id);
-      emit(state, { jobId: job.id, action: "removed" });
-    }
 
     recomputeNextRunsForMaintenance(state, { recomputeExpired: true });
     await persist(state);
