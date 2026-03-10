@@ -205,8 +205,46 @@ the standard HTTP-based CDP discovery (`/json/version`). OpenClaw supports both:
   discover the WebSocket debugger URL, then connects.
 - **WebSocket endpoints** (`ws://` / `wss://`) — OpenClaw connects directly,
   skipping `/json/version`. Use this for services like
-  [Browserbase](https://www.browserbase.com) or any provider that hands you a
+  [Browser Use](https://www.browser-use.com),
+  [Browserbase](https://www.browserbase.com), or any provider that hands you a
   WebSocket URL.
+
+### Browser Use
+
+[Browser Use](https://www.browser-use.com) is a cloud browser platform with
+anti-detect stealth, CAPTCHA solving, persistent profiles, and residential
+proxies.
+
+```json5
+{
+  browser: {
+    enabled: true,
+    defaultProfile: "browseruse",
+    remoteCdpTimeoutMs: 5000,
+    remoteCdpHandshakeTimeoutMs: 8000,
+    profiles: {
+      browseruse: {
+        // All Browser Use session params can be added as query params.
+        // See: https://docs.browser-use.com/cloud/api-v2/browsers/create-browser-session
+        cdpUrl: "wss://connect.browser-use.com?apiKey=<BROWSER_USE_API_KEY>&timeout=240&profileId=<PROFILE_ID>&proxyCountryCode=us",
+        color: "#ff750e",
+      },
+    },
+  },
+}
+```
+
+Notes:
+
+- [Sign up](https://www.browser-use.com) and copy your **API Key** from the
+  dashboard.
+- Replace `<BROWSER_USE_API_KEY>` with your real Browser Use API key.
+- Replace `<PROFILE_ID>` with a persistent profile ID, or remove the
+  `profileId` param if you don't need profile persistence.
+- All [Browser Use session parameters](https://docs.browser-use.com/cloud/api-v2/browsers/create-browser-session)
+  (timeout, profileId, proxyCountryCode, screen size, custom proxy, etc.)
+  are passed as query params in the `cdpUrl`.
+- See [browser-use.com](https://www.browser-use.com) for more information.
 
 ### Browserbase
 
