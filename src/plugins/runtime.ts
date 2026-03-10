@@ -1,5 +1,14 @@
 import { createEmptyPluginRegistry, type PluginRegistry } from "./registry.js";
 
+async function invalidatePluginCaches(): Promise<void> {
+  try {
+    const { invalidateTtsProviderCache } = await import("../tts/providers.js");
+    invalidateTtsProviderCache();
+  } catch {
+    // TTS providers may not be available in all contexts
+  }
+}
+
 const REGISTRY_STATE = Symbol.for("openclaw.pluginRegistryState");
 
 type RegistryState = {
@@ -26,6 +35,7 @@ export function setActivePluginRegistry(registry: PluginRegistry, cacheKey?: str
   state.registry = registry;
   state.key = cacheKey ?? null;
   state.version += 1;
+  void invalidatePluginCaches();
 }
 
 export function getActivePluginRegistry(): PluginRegistry | null {
@@ -36,6 +46,7 @@ export function requireActivePluginRegistry(): PluginRegistry {
   if (!state.registry) {
     state.registry = createEmptyPluginRegistry();
     state.version += 1;
+    void invalidatePluginCaches();
   }
   return state.registry;
 }
