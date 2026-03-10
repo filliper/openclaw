@@ -255,6 +255,7 @@ export async function runMemoryFlushIfNeeded(params: {
   sessionCtx: TemplateContext;
   opts?: GetReplyOptions;
   defaultModel: string;
+  defaultProvider?: string;
   agentCfgContextTokens?: number;
   resolvedVerboseLevel: VerboseLevel;
   sessionEntry?: SessionEntry;
@@ -289,6 +290,7 @@ export async function runMemoryFlushIfNeeded(params: {
     params.sessionEntry ??
     (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined);
   const contextWindowTokens = resolveMemoryFlushContextWindowTokens({
+    provider: params.followupRun.run.provider ?? params.defaultProvider,
     modelId: params.followupRun.run.model ?? params.defaultModel,
     agentCfgContextTokens: params.agentCfgContextTokens,
   });
