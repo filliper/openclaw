@@ -214,8 +214,8 @@ export async function updateColorText(
       };
     }
 
-    // No color params either — preserve existing text as-is
-    markup = existingText;
+    // No color params either — nothing to apply; bail out without touching the block
+    return { success: true, segments: 0, block: undefined };
   }
 
   const segments = parseColorMarkup(markup);

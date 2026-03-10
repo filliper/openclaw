@@ -62,7 +62,7 @@ describe("updateColorText", () => {
     });
   });
 
-  it("reads existing text block content when content is omitted", async () => {
+  it("returns early without patch when content and colors are all omitted", async () => {
     const block = {
       block_type: 2,
       text: {
@@ -72,11 +72,12 @@ describe("updateColorText", () => {
     const client = mockClient(block);
     const result = await updateColorText(client, "doc1", "blk1");
     expect(result.success).toBe(true);
+    expect(result.segments).toBe(0);
     expect(client.docx.documentBlock.get).toHaveBeenCalledWith({
       path: { document_id: "doc1", block_id: "blk1" },
     });
-    // 使用现有文本作为纯文本 segment
-    expect(result.segments).toBe(1);
+    // No-op: patch must NOT be called to preserve existing rich formatting
+    expect(client.docx.documentBlock.patch).not.toHaveBeenCalled();
   });
 
   it("reads heading2 block content when content is omitted", async () => {
