@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { createWriteStream, constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -25,6 +25,7 @@ export type BackupCreateOptions = {
   verify?: boolean;
   json?: boolean;
   nowMs?: number;
+  signal?: AbortSignal;
 };
 
 type BackupManifestAsset = {
@@ -271,6 +272,124 @@ function remapArchiveEntryPath(params: {
   return buildBackupArchivePath(params.archiveRoot, normalizedEntry);
 }
 
+function toAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) {
+    reason.name = "AbortError";
+    return reason;
+  }
+  const message = typeof reason === "string" && reason.length > 0 ? reason : "Aborted";
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw toAbortError(signal.reason);
+  }
+}
+
+async function createBackupArchive(params: {
+  tempArchivePath: string;
+  manifestPath: string;
+  archiveRoot: string;
+  assetPaths: string[];
+  signal?: AbortSignal;
+}): Promise<void> {
+  const entries = [params.manifestPath, ...params.assetPaths];
+  const sharedOptions = {
+    gzip: true,
+    portable: true,
+    preservePaths: true,
+    onWriteEntry: (entry: { path: string }) => {
+      entry.path = remapArchiveEntryPath({
+        entryPath: entry.path,
+        manifestPath: params.manifestPath,
+        archiveRoot: params.archiveRoot,
+      });
+    },
+  };
+
+  if (!params.signal) {
+    await tar.c(
+      {
+        file: params.tempArchivePath,
+        ...sharedOptions,
+      },
+      entries,
+    );
+    return;
+  }
+
+  const signal = params.signal;
+  throwIfAborted(signal);
+
+  await new Promise<void>((resolve, reject) => {
+    const pack = new tar.Pack(sharedOptions);
+    const output = createWriteStream(params.tempArchivePath);
+    let settled = false;
+
+    const finish = (err?: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      pack.removeListener("error", onPackError);
+      output.removeListener("error", onOutputError);
+      output.removeListener("close", onOutputClose);
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    };
+
+    const onAbort = () => {
+      const abortError = toAbortError(signal.reason);
+      pack.destroy();
+      output.destroy();
+      finish(abortError);
+    };
+
+    const onPackError = (err: unknown) => {
+      output.destroy();
+      finish(err);
+    };
+
+    const onOutputError = (err: unknown) => {
+      pack.destroy();
+      finish(err);
+    };
+
+    const onOutputClose = () => {
+      if (signal.aborted) {
+        finish(toAbortError(signal.reason));
+        return;
+      }
+      finish();
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    pack.on("error", onPackError);
+    output.on("error", onOutputError);
+    output.on("close", onOutputClose);
+    pack.pipe(output);
+
+    try {
+      for (const entry of entries) {
+        throwIfAborted(signal);
+        pack.add(entry);
+      }
+      pack.end();
+    } catch (err) {
+      pack.destroy();
+      output.destroy();
+      finish(err);
+    }
+  });
+}
+
 export async function backupCreateCommand(
   runtime: RuntimeEnv,
   opts: BackupCreateOptions = {},
@@ -279,13 +398,16 @@ export async function backupCreateCommand(
   const archiveRoot = buildBackupArchiveRoot(nowMs);
   const onlyConfig = Boolean(opts.onlyConfig);
   const includeWorkspace = onlyConfig ? false : (opts.includeWorkspace ?? true);
+  throwIfAborted(opts.signal);
   const plan = await resolveBackupPlanFromDisk({ includeWorkspace, onlyConfig, nowMs });
+  throwIfAborted(opts.signal);
   const outputPath = await resolveOutputPath({
     output: opts.output,
     nowMs,
     includedAssets: plan.included,
     stateDir: plan.stateDir,
   });
+  throwIfAborted(opts.signal);
 
   if (plan.included.length === 0) {
     throw new Error(
@@ -324,6 +446,7 @@ export async function backupCreateCommand(
 
   if (!opts.dryRun) {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    throwIfAborted(opts.signal);
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-backup-"));
     const manifestPath = path.join(tempDir, "manifest.json");
     const tempArchivePath = buildTempArchivePath(outputPath);
@@ -341,23 +464,15 @@ export async function backupCreateCommand(
         workspaceDirs: plan.workspaceDirs,
       });
       await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-
-      await tar.c(
-        {
-          file: tempArchivePath,
-          gzip: true,
-          portable: true,
-          preservePaths: true,
-          onWriteEntry: (entry) => {
-            entry.path = remapArchiveEntryPath({
-              entryPath: entry.path,
-              manifestPath,
-              archiveRoot,
-            });
-          },
-        },
-        [manifestPath, ...result.assets.map((asset) => asset.sourcePath)],
-      );
+      throwIfAborted(opts.signal);
+      await createBackupArchive({
+        tempArchivePath,
+        manifestPath,
+        archiveRoot,
+        assetPaths: result.assets.map((asset) => asset.sourcePath),
+        signal: opts.signal,
+      });
+      throwIfAborted(opts.signal);
       await publishTempArchive({ tempArchivePath, outputPath });
     } finally {
       await fs.rm(tempArchivePath, { force: true }).catch(() => undefined);
@@ -365,6 +480,7 @@ export async function backupCreateCommand(
     }
 
     if (opts.verify) {
+      throwIfAborted(opts.signal);
       await backupVerifyCommand(
         {
           ...runtime,
