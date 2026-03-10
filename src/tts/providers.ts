@@ -48,9 +48,7 @@ export function buildTtsProviderRegistry(
 
   if (cachedPluginOverrides) {
     for (const [key, provider] of Object.entries(cachedPluginOverrides)) {
-      if (!registry.has(key)) {
-        registry.set(key, provider);
-      }
+      registry.set(key, provider);
     }
   }
 

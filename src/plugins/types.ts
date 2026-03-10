@@ -189,6 +189,7 @@ export type MediaProviderDescribeVideoRequest = {
   model?: string;
   prompt?: string;
   timeoutMs: number;
+  fetchFn?: typeof fetch;
 };
 
 export type MediaProviderDescribeVideoResult = {

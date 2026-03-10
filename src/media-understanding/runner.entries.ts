@@ -437,6 +437,17 @@ export async function runProviderEntry(params: {
     config: params.config,
   });
 
+  // Check if this is a plugin provider by checking the active plugin registry
+  // Use normalizeMediaProviderId (already imported at module level) for media alias rules
+  // This is computed once and used for all capability types (image, audio, video)
+  const { getActivePluginRegistry } = await import("../plugins/runtime.js");
+  const pluginRegistry = getActivePluginRegistry();
+  const isPluginProvider =
+    pluginRegistry?.mediaProviders.some(
+      (entry: { provider: { id: string } }) =>
+        normalizeMediaProviderId(entry.provider.id) === providerId,
+    ) ?? false;
+
   if (capability === "image") {
     if (!params.agentDir) {
       throw new Error("Image understanding requires agentDir");
@@ -530,16 +541,6 @@ export async function runProviderEntry(params: {
   // Resolve proxy-aware fetch from env vars (HTTPS_PROXY, HTTP_PROXY, etc.)
   // so provider HTTP calls are routed through the proxy when configured.
   const fetchFn = resolveProxyFetchFromEnv();
-
-  // Check if this is a plugin provider by checking the active plugin registry
-  // Use normalizeMediaProviderId (already imported at module level) for media alias rules
-  const { getActivePluginRegistry } = await import("../plugins/runtime.js");
-  const pluginRegistry = getActivePluginRegistry();
-  const isPluginProvider =
-    pluginRegistry?.mediaProviders.some(
-      (entry: { provider: { id: string } }) =>
-        normalizeMediaProviderId(entry.provider.id) === providerId,
-    ) ?? false;
 
   if (capability === "audio") {
     if (!provider.transcribeAudio) {
