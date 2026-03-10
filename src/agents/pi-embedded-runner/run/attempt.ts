@@ -844,6 +844,7 @@ export async function runEmbeddedAttempt(
     let yieldDetected = false;
     // Late-binding reference so onYield can abort the session (declared after tool creation)
     let abortSessionForYield: (() => void) | null = null;
+    let yieldAbortSettled: Promise<void> | null = null;
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
     const toolsRaw = params.disableTools
@@ -1204,7 +1205,7 @@ export async function runEmbeddedAttempt(
       }
       const activeSession = session;
       abortSessionForYield = () => {
-        void activeSession.abort();
+        yieldAbortSettled = Promise.resolve(activeSession.abort());
       };
       removeToolResultContextGuard = installToolResultContextGuard({
         agent: activeSession.agent,
@@ -1806,6 +1807,11 @@ export async function runEmbeddedAttempt(
             err.cause === "sessions_yield";
           if (yieldAborted) {
             aborted = false;
+            // Ensure the session abort has fully settled before proceeding.
+            if (yieldAbortSettled) {
+              // eslint-disable-next-line @typescript-eslint/await-thenable -- abort() returns Promise<void> per AgentSession.d.ts
+              await yieldAbortSettled;
+            }
           } else {
             promptError = err;
             promptErrorSource = "prompt";
