@@ -491,8 +491,11 @@ async function loadExistingRescueConfig(
   const io = createConfigIO({ env });
   try {
     return io.loadConfig();
-  } catch {
-    return undefined;
+  } catch (error) {
+    throw new Error(
+      `Rescue watchdog setup failed: existing rescue profile config at "${configPath}" could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 

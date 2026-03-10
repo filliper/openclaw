@@ -473,4 +473,43 @@ describe("setupRescueWatchdog", () => {
     expect(gatewayInstall).not.toHaveBeenCalled();
     expect(gatewayRestart).not.toHaveBeenCalled();
   });
+
+  it("fails closed when an existing rescue config cannot be loaded", async () => {
+    const mainStateDir = path.join(tempHome, ".openclaw-work");
+    const mainConfigPath = path.join(mainStateDir, "openclaw.json");
+    const rescueStateDir = path.join(tempHome, ".openclaw-work-rescue");
+    const rescueConfigPath = path.join(rescueStateDir, "openclaw.json");
+
+    process.env.HOME = tempHome;
+    process.env.OPENCLAW_TEST_FAST = "1";
+    process.env.OPENCLAW_PROFILE = "work";
+    process.env.OPENCLAW_STATE_DIR = mainStateDir;
+    process.env.OPENCLAW_CONFIG_PATH = mainConfigPath;
+    process.env.OPENCLAW_GATEWAY_PORT = "18789";
+
+    await fs.mkdir(mainStateDir, { recursive: true });
+    await fs.mkdir(rescueStateDir, { recursive: true });
+    await fs.writeFile(mainConfigPath, JSON.stringify({ wizard: { marker: "main" } }), "utf8");
+    await fs.writeFile(rescueConfigPath, "{ invalid json", "utf8");
+
+    await expect(
+      setupRescueWatchdog({
+        sourceConfig: {
+          tools: { profile: "coding" },
+        },
+        workspaceDir: path.join(tempHome, "workspace-work"),
+        mainPort: 18_789,
+        monitoredProfile: "work",
+        runtime: "node",
+        output: {
+          log: vi.fn(),
+        },
+      }),
+    ).rejects.toThrow(
+      `Rescue watchdog setup failed: existing rescue profile config at "${rescueConfigPath}" could not be loaded:`,
+    );
+
+    expect(gatewayInstall).not.toHaveBeenCalled();
+    expect(gatewayRestart).not.toHaveBeenCalled();
+  });
 });

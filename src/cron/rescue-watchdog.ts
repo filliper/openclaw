@@ -1,3 +1,4 @@
+import net from "node:net";
 import { isValidProfileName } from "../cli/profile-utils.js";
 import { createConfigIO } from "../config/io.js";
 import { resolveGatewayPort } from "../config/paths.js";
@@ -60,6 +61,10 @@ function summarizeCommandFailure(
   return `exit code ${result.code ?? "unknown"}`;
 }
 
+function formatGatewayProbeHost(host: string): string {
+  return net.isIP(host) === 6 && !host.startsWith("[") ? `[${host}]` : host;
+}
+
 function resolveProfileGatewayProbeUrl(
   cfg: {
     gateway?: {
@@ -79,7 +84,7 @@ function resolveProfileGatewayProbeUrl(
       : bindMode === "tailnet"
         ? (pickPrimaryTailnetIPv4() ?? "127.0.0.1")
         : "127.0.0.1";
-  return `${scheme}://${host}:${port}`;
+  return `${scheme}://${formatGatewayProbeHost(host)}:${port}`;
 }
 
 async function probeProfileGateway(params: {
