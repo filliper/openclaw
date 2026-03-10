@@ -104,6 +104,13 @@ export type RegisterTelegramHandlerParams = {
     chatId: string | number,
     messageThreadId?: number,
   ) => { groupConfig?: TelegramGroupConfig; topicConfig?: TelegramTopicConfig };
+  resolveGroupRequireMention: (chatId: string | number) => boolean | undefined;
+  resolveGroupActivation: (params: {
+    chatId: string | number;
+    agentId?: string;
+    messageThreadId?: number;
+    sessionKey?: string;
+  }) => boolean | undefined;
   shouldSkipUpdate: (ctx: TelegramUpdateKeyContext) => boolean;
   processMessage: (
     ctx: TelegramContext,
@@ -237,9 +244,13 @@ async function resolveTelegramCommandAuth(params: {
     : null;
 
   const sendAuthMessage = async (text: string) => {
+    const threadParams = buildTelegramThreadParams(threadSpec);
     await withTelegramApiErrorLogging({
       operation: "sendMessage",
-      fn: () => bot.api.sendMessage(chatId, text, threadParams),
+      fn: () =>
+        threadParams
+          ? bot.api.sendMessage(chatId, text, threadParams)
+          : bot.api.sendMessage(chatId, text),
     });
     return null;
   };
