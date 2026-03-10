@@ -134,7 +134,12 @@ function substituteString(
   return chunks.join("");
 }
 
-export function containsEnvVarReference(value: string): boolean {
+export function containsEnvVarReference(value: unknown): boolean {
+  // Only strings can contain env var references
+  if (typeof value !== "string") {
+    return false;
+  }
+  
   if (!value.includes("$")) {
     return false;
   }
