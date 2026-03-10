@@ -28,6 +28,13 @@ function isManagedVllmProvider(provider: string): boolean {
   return provider === "vllm" || provider.startsWith("vllm-");
 }
 
+function isAvailableModelRef(cfg: OpenClawConfig, modelRef: string): boolean {
+  const parsed = parseModelRef(modelRef, DEFAULT_PROVIDER);
+  return (
+    !isManagedVllmProvider(parsed.provider) || Boolean(cfg.models?.providers?.[parsed.provider])
+  );
+}
+
 export function clearStaleVllmDefaultModel(cfg: OpenClawConfig): OpenClawConfig {
   const defaultModel = cfg.agents?.defaults?.model;
   if (!defaultModel) {
@@ -50,7 +57,9 @@ export function clearStaleVllmDefaultModel(cfg: OpenClawConfig): OpenClawConfig 
 
   const defaults = { ...cfg.agents?.defaults };
   if (typeof defaultModel === "object" && "fallbacks" in defaultModel) {
-    const fallbacks = Array.isArray(defaultModel.fallbacks) ? defaultModel.fallbacks : [];
+    const fallbacks = Array.isArray(defaultModel.fallbacks)
+      ? defaultModel.fallbacks.filter((modelRef) => isAvailableModelRef(cfg, modelRef))
+      : [];
     const [nextPrimary, ...remainingFallbacks] = fallbacks;
     if (nextPrimary) {
       defaults.model = {
