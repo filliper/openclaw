@@ -226,14 +226,12 @@ export async function uploadImageFeishu(params: {
  * Feishu's server decodes and preserves the original display name.
  */
 export function sanitizeFileNameForUpload(fileName: string): string {
+  // Do NOT encode non-ASCII characters - causes encoded filename to display
   const ASCII_ONLY = /^[\x20-\x7E]+$/;
   if (ASCII_ONLY.test(fileName)) {
     return fileName;
   }
-  return encodeURIComponent(fileName)
-    .replace(/'/g, "%27")
-    .replace(/\(/g, "%28")
-    .replace(/\)/g, "%29");
+  return fileName;
 }
 
 /**
