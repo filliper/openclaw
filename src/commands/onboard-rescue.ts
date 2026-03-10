@@ -47,6 +47,8 @@ const RESCUE_GATEWAY_READY_POLL_MS = 250;
 
 type RescueCronListResponse = {
   jobs?: Array<{ id?: string; name?: string }>;
+  hasMore?: boolean;
+  nextOffset?: number | null;
 };
 
 export type RescueWatchdogSetupResult = {
@@ -539,17 +541,33 @@ async function ensureRescueCronJob(params: {
 }): Promise<{ cronJobId?: string; cronAction?: "created" | "updated" }> {
   const wsUrl = `ws://127.0.0.1:${params.rescuePort}`;
   const name = `${RESCUE_JOB_NAME_PREFIX} (${resolveMonitoredProfileName(params.monitoredProfile)})`;
-  const page = await callGateway<RescueCronListResponse>({
-    url: wsUrl,
-    token: params.rescueToken,
-    method: "cron.list",
-    params: {
-      includeDisabled: true,
-      limit: 100,
-      query: name,
-    },
-  });
-  const existing = page.jobs?.find((job) => job.name === name);
+  const pageSize = 100;
+  let offset = 0;
+  let existing: { id?: string; name?: string } | undefined;
+  while (!existing) {
+    const page = await callGateway<RescueCronListResponse>({
+      url: wsUrl,
+      token: params.rescueToken,
+      method: "cron.list",
+      params: {
+        includeDisabled: true,
+        limit: pageSize,
+        offset,
+        query: name,
+      },
+    });
+    existing = page.jobs?.find((job) => job.name === name);
+    if (existing) {
+      break;
+    }
+    if (page.hasMore !== true) {
+      break;
+    }
+    if (typeof page.nextOffset !== "number" || page.nextOffset <= offset) {
+      break;
+    }
+    offset = page.nextOffset;
+  }
   const payload = {
     agentId: RESCUE_WATCHDOG_AGENT_ID,
     name,

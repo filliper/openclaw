@@ -41,15 +41,17 @@ const inspectPortUsage = vi.hoisted(() =>
   })),
 );
 const callGateway = vi.hoisted(() =>
-  vi.fn(async (params: { method: string }) => {
-    if (params.method === "cron.list") {
-      return { jobs: [] };
-    }
-    if (params.method === "cron.add") {
-      return { id: "job-1" };
-    }
-    throw new Error(`Unexpected gateway method: ${params.method}`);
-  }),
+  vi.fn<(params: { method: string; params?: Record<string, unknown> }) => Promise<unknown>>(
+    async (params) => {
+      if (params.method === "cron.list") {
+        return { jobs: [] };
+      }
+      if (params.method === "cron.add") {
+        return { id: "job-1" };
+      }
+      throw new Error(`Unexpected gateway method: ${params.method}`);
+    },
+  ),
 );
 const gatewayInstall = vi.hoisted(() => vi.fn(async () => {}));
 const gatewayRestart = vi.hoisted(() => vi.fn(async () => {}));
@@ -143,8 +145,23 @@ describe("setupRescueWatchdog", () => {
     resolveGatewayInstallToken.mockClear();
     waitForGatewayReachable.mockClear();
     probeGateway.mockClear();
-    inspectPortUsage.mockClear();
-    callGateway.mockClear();
+    inspectPortUsage.mockReset();
+    inspectPortUsage.mockImplementation(async (port: number) => ({
+      port,
+      status: "busy",
+      listeners: [{ pid: 4242, commandLine: "openclaw gateway run" }],
+      hints: [],
+    }));
+    callGateway.mockReset();
+    callGateway.mockImplementation(async (params: { method: string }) => {
+      if (params.method === "cron.list") {
+        return { jobs: [] };
+      }
+      if (params.method === "cron.add") {
+        return { id: "job-1" };
+      }
+      throw new Error(`Unexpected gateway method: ${params.method}`);
+    });
     gatewayInstall.mockClear();
     gatewayRestart.mockClear();
     gatewayIsLoaded.mockReset();
@@ -444,6 +461,87 @@ describe("setupRescueWatchdog", () => {
 
     expect(gatewayInstall).toHaveBeenCalledTimes(1);
     expect(gatewayRestart).not.toHaveBeenCalled();
+  });
+
+  it("pages cron.list before deciding to create the rescue watchdog job", async () => {
+    process.env.HOME = tempHome;
+    process.env.OPENCLAW_TEST_FAST = "1";
+    process.env.OPENCLAW_PROFILE = "work";
+
+    const jobName = "Rescue watchdog (work)";
+    callGateway.mockImplementation(
+      async (params: { method: string; params?: { offset?: number } }) => {
+        if (params.method === "cron.list") {
+          const offset = params.params?.offset ?? 0;
+          if (offset === 0) {
+            return {
+              jobs: [{ id: "other-job", name: "Some other job" }],
+              hasMore: true,
+              nextOffset: 100,
+            };
+          }
+          return {
+            jobs: [{ id: "existing-watchdog", name: jobName }],
+            hasMore: false,
+            nextOffset: null,
+          };
+        }
+        if (params.method === "cron.update") {
+          return { ok: true };
+        }
+        if (params.method === "cron.add") {
+          return { id: "unexpected-create" };
+        }
+        throw new Error(`Unexpected gateway method: ${params.method}`);
+      },
+    );
+
+    const result = await setupRescueWatchdog({
+      sourceConfig: {
+        tools: { profile: "coding" },
+      },
+      workspaceDir: path.join(tempHome, "workspace-work"),
+      mainPort: 18_789,
+      monitoredProfile: "work",
+      runtime: "node",
+      output: {
+        log: vi.fn(),
+      },
+    });
+
+    expect(result.cronAction).toBe("updated");
+    expect(result.cronJobId).toBe("existing-watchdog");
+    expect(callGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "cron.list",
+        params: expect.objectContaining({
+          offset: 0,
+          limit: 100,
+        }),
+      }),
+    );
+    expect(callGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "cron.list",
+        params: expect.objectContaining({
+          offset: 100,
+          limit: 100,
+        }),
+      }),
+    );
+    expect(callGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "cron.update",
+        params: expect.objectContaining({
+          id: "existing-watchdog",
+        }),
+      }),
+    );
+    expect(callGateway).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "cron.add",
+      }),
+    );
   });
 
   it("refuses to clobber an existing non-watchdog rescue profile", async () => {
