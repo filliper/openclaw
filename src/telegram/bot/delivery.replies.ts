@@ -13,6 +13,7 @@ import {
   toPluginMessageSentEvent,
 } from "../../hooks/message-hook-mappers.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { logWarn } from "../../logger.js";
 import { buildOutboundMediaLoadOptions } from "../../media/load-options.js";
 import { isGifMedia, kindFromMime } from "../../media/mime.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
@@ -701,6 +702,9 @@ export async function deliverReplies(params: {
         groupId: params.mirrorGroupId,
       });
     } catch (error) {
+      logWarn(
+        `telegram reply delivery failed chat=${params.chatId} account=${params.accountId}: ${formatErrorMessage(error)}`,
+      );
       emitMessageSentHooks({
         hookRunner,
         enabled: hasMessageSentHooks,
