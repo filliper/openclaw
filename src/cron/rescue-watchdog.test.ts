@@ -4,6 +4,7 @@ const loadConfig = vi.hoisted(() =>
   vi.fn(() => ({
     gateway: {
       port: 18_789,
+      bind: "loopback",
       auth: {
         mode: "token",
         token: "main-token",
@@ -95,6 +96,46 @@ describe("runRescueWatchdogJob", () => {
     expect(result.summary).toContain("found it healthy");
     expect(restartService).not.toHaveBeenCalled();
     expect(runCommandWithTimeout).not.toHaveBeenCalled();
+  });
+
+  it("probes with the configured scheme and custom bind host", async () => {
+    loadConfig.mockReturnValue({
+      gateway: {
+        port: 18_789,
+        bind: "custom",
+        customBindHost: "gateway.internal",
+        tls: { enabled: true },
+        auth: {
+          mode: "token",
+          token: "main-token",
+        },
+      },
+    });
+    probeGateway.mockResolvedValue({
+      ok: true,
+      close: null,
+      error: null,
+    });
+
+    const result = await runRescueWatchdogJob({
+      job: {
+        id: "job-custom-bind",
+        name: "rescue",
+        payload: {
+          kind: "rescueWatchdog",
+          monitoredProfile: "work",
+          timeoutSeconds: 120,
+        },
+      } as never,
+      monitoredProfile: "work",
+    });
+
+    expect(result.status).toBe("ok");
+    expect(probeGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "wss://gateway.internal:18789",
+      }),
+    );
   });
 
   it("rejects rescue-shaped monitored profiles before service actions", async () => {

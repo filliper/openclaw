@@ -4,6 +4,7 @@ import { resolveGatewayPort } from "../config/paths.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { resolveGatewayProbeAuthSafe } from "../gateway/probe-auth.js";
 import { probeGateway } from "../gateway/probe.js";
+import { pickPrimaryTailnetIPv4 } from "../infra/tailnet.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import {
   buildRescueProfileEnv,
@@ -59,12 +60,41 @@ function summarizeCommandFailure(
   return `exit code ${result.code ?? "unknown"}`;
 }
 
+function resolveProfileGatewayProbeUrl(
+  cfg: {
+    gateway?: {
+      bind?: string;
+      customBindHost?: string;
+      tls?: { enabled?: boolean };
+    };
+  },
+  port: number,
+): string {
+  const scheme = cfg.gateway?.tls?.enabled === true ? "wss" : "ws";
+  const bindMode = cfg.gateway?.bind ?? "loopback";
+  const customBindHost = cfg.gateway?.customBindHost?.trim();
+  const host =
+    bindMode === "custom" && customBindHost
+      ? customBindHost
+      : bindMode === "tailnet"
+        ? (pickPrimaryTailnetIPv4() ?? "127.0.0.1")
+        : "127.0.0.1";
+  return `${scheme}://${host}:${port}`;
+}
+
 async function probeProfileGateway(params: {
+  cfg: {
+    gateway?: {
+      bind?: string;
+      customBindHost?: string;
+      tls?: { enabled?: boolean };
+    };
+  };
   port: number;
   auth: { token?: string; password?: string };
 }): Promise<{ healthy: boolean; detail?: string }> {
   const probe = await probeGateway({
-    url: `ws://127.0.0.1:${params.port}`,
+    url: resolveProfileGatewayProbeUrl(params.cfg, params.port),
     auth:
       params.auth.token || params.auth.password
         ? { token: params.auth.token, password: params.auth.password }
@@ -78,6 +108,13 @@ async function probeProfileGateway(params: {
 }
 
 async function waitForProfileGateway(params: {
+  cfg: {
+    gateway?: {
+      bind?: string;
+      customBindHost?: string;
+      tls?: { enabled?: boolean };
+    };
+  };
   port: number;
   auth: { token?: string; password?: string };
   abortSignal?: AbortSignal;
@@ -180,7 +217,7 @@ export async function runRescueWatchdogJob(params: {
   }
   const actions: string[] = [];
 
-  const initialProbe = await probeProfileGateway({ port, auth });
+  const initialProbe = await probeProfileGateway({ cfg, port, auth });
   if (initialProbe.healthy) {
     return {
       status: "ok",
@@ -197,6 +234,7 @@ export async function runRescueWatchdogJob(params: {
   }
 
   const restartProbe = await waitForProfileGateway({
+    cfg,
     port,
     auth,
     abortSignal: params.abortSignal,
@@ -242,6 +280,7 @@ export async function runRescueWatchdogJob(params: {
   }
 
   const doctorProbe = await waitForProfileGateway({
+    cfg,
     port,
     auth,
     abortSignal: params.abortSignal,
