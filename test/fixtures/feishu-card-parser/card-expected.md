@@ -26,7 +26,7 @@ npm install @example/api-sdk
 # Initialize
 const api = require('@example/api-sdk');
 const client = new api.Client({
-  apiKey: 'your-api-key'
+  apiKey: '<YOUR_API_KEY>'
 });
 
 ```

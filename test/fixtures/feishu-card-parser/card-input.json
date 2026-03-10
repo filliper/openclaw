@@ -238,7 +238,7 @@
                         { "content": "  ", "contentType": "text" },
                         { "content": "apiKey:", "contentType": "text" },
                         { "content": " ", "contentType": "text" },
-                        { "content": "'your-api-key'", "contentType": "string" },
+                        { "content": "'<YOUR_API_KEY>'", "contentType": "string" },
                         { "content": "\n", "contentType": "text" }
                       ]
                     },
