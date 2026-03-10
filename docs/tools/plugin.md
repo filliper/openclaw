@@ -652,6 +652,90 @@ Notes:
 - Return `configPatch` when you need to add default models or provider config.
 - Return `defaultModel` so `--set-default` can update agent defaults.
 
+### Register a media provider
+
+Plugins can register **media providers** to provide custom ASR (audio transcription),
+image description, video description, or text-to-speech capabilities. These providers
+are used by the media-understanding pipeline when processing inbound media.
+
+```ts
+api.registerMediaProvider({
+  id: "my-tts",
+  label: "My TTS",
+  capabilities: ["tts"], // "audio" | "image" | "video" | "tts"
+  textToSpeech: async (req) => {
+    // req.text: string to synthesize
+    // req.model?: string
+    // req.voice?: string
+    // req.apiKey: string
+    // req.baseUrl?: string
+    // req.timeoutMs: number
+    // typeof fetch
+
+    req.fetchFn?: // Return audio buffer and MIME type
+    return {
+      audio: Buffer.from(/* audio data */),
+      mime: "audio/mp3",
+      sampleRate: 24000, // optional, required for telephony
+    };
+  },
+  transcribeAudio: async (req) => {
+    // req.buffer: ArrayBuffer with audio data
+    // req.fileName: string
+    // req.mime?: string
+    // req.model?: string
+    // req.language?: string
+    // req.apiKey: string
+    // req.timeoutMs: number
+
+    return {
+      text: "transcribed text",
+      model: req.model,
+    };
+  },
+  describeImage: async (req) => {
+    // req.buffer: Buffer with image data
+    // req.fileName: string
+    // req.mime?: string
+    // req.model?: string
+    // req.prompt?: string
+    // req.maxTokens?: number
+    // req.apiKey: string
+    // req.baseUrl?: string
+    // req.timeoutMs: number
+
+    return {
+      text: "image description",
+      model: req.model,
+    };
+  },
+  describeVideo: async (req) => {
+    // req.buffer: Buffer with video data
+    // req.fileName: string
+    // req.mime?: string
+    // req.model?: string
+    // req.prompt?: string
+    // req.maxTokens?: number
+    // req.apiKey: string
+    // req.baseUrl?: string
+    // req.timeoutMs: number
+
+    return {
+      text: "video description",
+      model: req.model,
+    };
+  },
+});
+```
+
+Notes:
+
+- Declare which capabilities your provider supports in the `capabilities` array.
+- Implement only the methods for capabilities you support.
+- Providers are tried in this order: user's configured provider → other plugin providers → built-in providers.
+- For TTS, return `sampleRate` in the result if your provider will be used for telephony (voice calls).
+- The `apiKey`, `baseUrl`, and other fields come from the user's `tools.media.*` config.
+
 ### Register a messaging channel
 
 Plugins can register **channel plugins** that behave like built‑in channels
