@@ -21,6 +21,7 @@ export type AuthChoice =
   | "moonshot-api-key-cn"
   | "kimi-code-api-key"
   | "synthetic-api-key"
+  | "sambanova-api-key"
   | "venice-api-key"
   | "together-api-key"
   | "huggingface-api-key"
@@ -74,6 +75,7 @@ export type AuthChoiceGroupId =
   | "venice"
   | "mistral"
   | "qwen"
+  | "sambanova"
   | "together"
   | "huggingface"
   | "qianfan"
@@ -130,6 +132,7 @@ export type OnboardOptions = {
   xiaomiApiKey?: string;
   minimaxApiKey?: string;
   syntheticApiKey?: string;
+  sambanovaApiKey?: string;
   veniceApiKey?: string;
   togetherApiKey?: string;
   huggingfaceApiKey?: string;
