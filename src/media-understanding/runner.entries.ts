@@ -578,31 +578,53 @@ export async function runProviderEntry(params: {
       entry,
     });
     const model = entry.model?.trim() || DEFAULT_AUDIO_MODELS[providerId] || entry.model;
-    const result = await executeWithApiKeyRotation({
-      provider: providerId,
-      apiKeys,
-      execute: async (apiKey) =>
-        transcribeAudio({
-          buffer: media.buffer,
-          fileName: media.fileName,
-          mime: media.mime,
-          apiKey,
-          baseUrl,
-          headers,
-          model,
-          language: entry.language ?? params.config?.language ?? cfg.tools?.media?.audio?.language,
-          prompt,
-          query: providerQuery,
-          timeoutMs,
-          fetchFn,
-        }),
-    });
+
+    let audioResult: { text: string; model?: string };
+
+    if (isPluginProvider) {
+      // Plugin providers: call directly without API key rotation
+      audioResult = await transcribeAudio({
+        buffer: media.buffer,
+        fileName: media.fileName,
+        mime: media.mime,
+        apiKey: "",
+        baseUrl,
+        headers,
+        model,
+        language: entry.language ?? params.config?.language ?? cfg.tools?.media?.audio?.language,
+        prompt,
+        query: providerQuery,
+        timeoutMs,
+        fetchFn,
+      });
+    } else {
+      audioResult = await executeWithApiKeyRotation({
+        provider: providerId,
+        apiKeys,
+        execute: async (apiKey) =>
+          transcribeAudio({
+            buffer: media.buffer,
+            fileName: media.fileName,
+            mime: media.mime,
+            apiKey,
+            baseUrl,
+            headers,
+            model,
+            language:
+              entry.language ?? params.config?.language ?? cfg.tools?.media?.audio?.language,
+            prompt,
+            query: providerQuery,
+            timeoutMs,
+            fetchFn,
+          }),
+      });
+    }
     return {
       kind: "audio.transcription",
       attachmentIndex: params.attachmentIndex,
-      text: trimOutput(result.text, maxChars),
+      text: trimOutput(audioResult.text, maxChars),
       provider: providerId,
-      model: result.model ?? model,
+      model: audioResult.model ?? model,
     };
   }
 
@@ -643,29 +665,47 @@ export async function runProviderEntry(params: {
   }
   // For plugin providers, pass empty auth - plugins get credentials from their config
 
-  const result = await executeWithApiKeyRotation({
-    provider: providerId,
-    apiKeys,
-    execute: (apiKey) =>
-      describeVideo({
-        buffer: media.buffer,
-        fileName: media.fileName,
-        mime: media.mime,
-        apiKey,
-        baseUrl,
-        headers,
-        model: entry.model,
-        prompt,
-        timeoutMs,
-        fetchFn,
-      }),
-  });
+  let videoResult: { text: string; model?: string };
+
+  if (isPluginProvider) {
+    // Plugin providers: call directly without API key rotation
+    videoResult = await describeVideo({
+      buffer: media.buffer,
+      fileName: media.fileName,
+      mime: media.mime,
+      apiKey: "",
+      baseUrl,
+      headers,
+      model: entry.model,
+      prompt,
+      timeoutMs,
+      fetchFn,
+    });
+  } else {
+    videoResult = await executeWithApiKeyRotation({
+      provider: providerId,
+      apiKeys,
+      execute: (apiKey) =>
+        describeVideo({
+          buffer: media.buffer,
+          fileName: media.fileName,
+          mime: media.mime,
+          apiKey,
+          baseUrl,
+          headers,
+          model: entry.model,
+          prompt,
+          timeoutMs,
+          fetchFn,
+        }),
+    });
+  }
   return {
     kind: "video.description",
     attachmentIndex: params.attachmentIndex,
-    text: trimOutput(result.text, maxChars),
+    text: trimOutput(videoResult.text, maxChars),
     provider: providerId,
-    model: result.model ?? entry.model,
+    model: videoResult.model ?? entry.model,
   };
 }
 
