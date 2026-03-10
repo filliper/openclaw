@@ -1160,6 +1160,7 @@ async function handleDiscordComponentEvent(params: {
     kind: consumed.kind === "select" ? "select" : "button",
     label: consumed.label,
     values,
+    cardText: consumed.cardText,
   });
 
   try {
