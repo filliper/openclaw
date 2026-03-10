@@ -129,6 +129,42 @@ function buildTempArchivePath(outputPath: string): string {
   return `${outputPath}.${randomUUID()}.tmp`;
 }
 
+async function findFirstSymlinkInTree(rootPath: string): Promise<string | undefined> {
+  const stat = await fs.lstat(rootPath);
+  if (stat.isSymbolicLink()) {
+    return rootPath;
+  }
+  if (!stat.isDirectory()) {
+    return undefined;
+  }
+
+  const entries = await fs.readdir(rootPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(rootPath, entry.name);
+    if (entry.isSymbolicLink()) {
+      return entryPath;
+    }
+    if (entry.isDirectory()) {
+      const nested = await findFirstSymlinkInTree(entryPath);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+  return undefined;
+}
+
+async function assertAssetsContainNoSymlinks(assets: readonly BackupAsset[]): Promise<void> {
+  for (const asset of assets) {
+    const symlinkPath = await findFirstSymlinkInTree(asset.sourcePath);
+    if (symlinkPath) {
+      throw new Error(
+        `Backup source contains symbolic links that restore cannot safely unpack: ${symlinkPath}`,
+      );
+    }
+  }
+}
+
 function isLinkUnsupportedError(code: string | undefined): boolean {
   return code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "EPERM";
 }
@@ -321,6 +357,8 @@ export async function backupCreateCommand(
     assets: plan.included,
     skipped: plan.skipped,
   };
+
+  await assertAssetsContainNoSymlinks(result.assets);
 
   if (!opts.dryRun) {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });

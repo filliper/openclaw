@@ -559,7 +559,7 @@ async function extractZip(params: {
 
 export type TarEntryInfo = { path: string; type: string; size: number };
 
-const BLOCKED_TAR_ENTRY_TYPES = new Set([
+export const BLOCKED_TAR_ENTRY_TYPES = new Set([
   "SymbolicLink",
   "Link",
   "BlockDevice",
@@ -567,6 +567,10 @@ const BLOCKED_TAR_ENTRY_TYPES = new Set([
   "FIFO",
   "Socket",
 ]);
+
+export function isBlockedTarEntryType(type: string): boolean {
+  return BLOCKED_TAR_ENTRY_TYPES.has(type);
+}
 
 function readTarEntryInfo(entry: unknown): TarEntryInfo {
   const p =
