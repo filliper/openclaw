@@ -240,13 +240,23 @@ export const buildTelegramMessageContext = async ({
         identityLinks: freshCfg.session?.identityLinks,
       }).toLowerCase()
     : route.sessionKey;
-  // Telegram DM isolation: when dmScope is "main" (the default), DMs would
+  // Telegram DM isolation: when dmScope is unset (defaults to "main"), DMs
   // share the agent:main:main session with heartbeats and internal traffic.
   // Force per-channel-peer isolation so DMs always get their own session key
   // (e.g. agent:main:telegram:direct:<id>), preventing session pollution.
+  //
+  // Only override when dmScope is NOT explicitly configured — if the operator
+  // set dmScope: "main" intentionally (or uses conversationBindings / ACP
+  // bindings), we respect that choice.
   // See: https://github.com/openclaw/openclaw/issues/41165
-  if (!isGroup && !isNamedAccountFallback && baseSessionKey === route.mainSessionKey) {
-    baseSessionKey = buildAgentSessionKey({
+  const dmScopeExplicit = cfg.session?.dmScope != null;
+  if (
+    !isGroup &&
+    !isNamedAccountFallback &&
+    !dmScopeExplicit &&
+    baseSessionKey === route.mainSessionKey
+  ) {
+    const isolatedKey = buildAgentSessionKey({
       agentId: route.agentId,
       channel: "telegram",
       accountId: route.accountId,
@@ -260,6 +270,10 @@ export const buildTelegramMessageContext = async ({
       dmScope: "per-channel-peer",
       identityLinks: freshCfg.session?.identityLinks,
     }).toLowerCase();
+    logVerbose(
+      `telegram: DM isolation override — rerouting from ${baseSessionKey} to ${isolatedKey} (dmScope not explicitly configured)`,
+    );
+    baseSessionKey = isolatedKey;
   }
   // DMs: use thread suffix for session isolation (works regardless of dmScope)
   const threadKeys =
