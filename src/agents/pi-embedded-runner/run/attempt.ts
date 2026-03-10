@@ -1402,6 +1402,7 @@ export async function runEmbeddedAttempt(
           sessionManager,
           sessionId: params.sessionId,
           policy: transcriptPolicy,
+          thinkingEnabled: params.thinkLevel !== "off",
         });
         cacheTrace?.recordStage("session:sanitized", { messages: prior });
         const validatedGemini = transcriptPolicy.validateGeminiTurns
