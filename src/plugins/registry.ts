@@ -477,7 +477,10 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const existing = registry.mediaProviders.find((entry) => entry.provider.id === id);
+    const normalizedId = id.toLowerCase();
+    const existing = registry.mediaProviders.find(
+      (entry) => entry.provider.id.toLowerCase() === normalizedId,
+    );
     if (existing) {
       pushDiagnostic({
         level: "error",

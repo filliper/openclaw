@@ -766,6 +766,41 @@ export async function textToSpeech(params: {
     }
   }
 
+  const builtinSet = new Set<string>(TTS_PROVIDERS);
+  for (const [, pluginProvider] of pluginTtsRegistry) {
+    if (builtinSet.has(pluginProvider.id)) {
+      continue;
+    }
+    const provider = pluginProvider.id;
+    const providerStart = Date.now();
+    try {
+      const result = await pluginProvider.textToSpeech({
+        text: params.text,
+        apiKey: "",
+        timeoutMs: config.timeoutMs,
+      });
+
+      const tempRoot = resolvePreferredOpenClawTmpDir();
+      mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+      const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
+      const mimeExt = result.mime.split("/")[1]?.split(";")[0] || "mp3";
+      const audioPath = path.join(tempDir, `voice-${Date.now()}.${mimeExt}`);
+      writeFileSync(audioPath, result.audio);
+      scheduleCleanup(tempDir);
+
+      return {
+        success: true,
+        audioPath,
+        latencyMs: Date.now() - providerStart,
+        provider,
+        outputFormat: result.mime,
+        voiceCompatible: isVoiceCompatibleAudio({ fileName: audioPath }),
+      };
+    } catch (err) {
+      errors.push(`${provider}: ${String(err)}`);
+    }
+  }
+
   return buildTtsFailureResult(errors);
 }
 
@@ -876,6 +911,33 @@ export async function textToSpeechTelephony(params: {
       };
     } catch (err) {
       errors.push(formatTtsProviderError(provider, err));
+    }
+  }
+
+  const builtinSetTelephony = new Set<string>(TTS_PROVIDERS);
+  for (const [, pluginProvider] of pluginTtsRegistry) {
+    if (builtinSetTelephony.has(pluginProvider.id)) {
+      continue;
+    }
+    const provider = pluginProvider.id;
+    const providerStart = Date.now();
+    try {
+      const result = await pluginProvider.textToSpeech({
+        text: params.text,
+        apiKey: "",
+        timeoutMs: config.timeoutMs,
+      });
+
+      return {
+        success: true,
+        audioBuffer: result.audio,
+        outputFormat: result.mime,
+        sampleRate: result.sampleRate,
+        latencyMs: Date.now() - providerStart,
+        provider,
+      };
+    } catch (err) {
+      errors.push(`${provider}: ${String(err)}`);
     }
   }
 
