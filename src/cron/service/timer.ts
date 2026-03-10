@@ -126,16 +126,8 @@ function errorBackoffMs(
   return scheduleMs[Math.max(0, idx)];
 }
 
-function looksLikeIsolatedDegradedError(errorText: string): boolean {
-  const raw = errorText.trim().toLowerCase();
-  if (!raw) {
-    return false;
-  }
-  return (
-    raw.includes(timeoutErrorMessage()) ||
-    raw.includes("request timed out before a response was generated") ||
-    raw.includes("ai service is temporarily overloaded")
-  );
+function hasStructuredIsolatedRecoverySignal(result: TimedCronRunOutcome): boolean {
+  return result.errorKind === "isolated-runner-timeout";
 }
 
 function maybeRecoverIsolatedRunnerDegradedState(params: {
@@ -152,8 +144,7 @@ function maybeRecoverIsolatedRunnerDegradedState(params: {
   if (result.status !== "error") {
     return result;
   }
-  const errorText = result.error?.trim();
-  if (!errorText || !looksLikeIsolatedDegradedError(errorText)) {
+  if (!hasStructuredIsolatedRecoverySignal(result)) {
     return result;
   }
 
@@ -703,7 +694,8 @@ export async function onTimer(state: CronServiceState) {
         const result = await executeJobCoreWithTimeout(state, job);
         return { jobId: id, ...result, startedAt, endedAt: state.deps.nowMs() };
       } catch (err) {
-        const errorText = isAbortError(err) ? timeoutErrorMessage() : String(err);
+        const timedOut = isAbortError(err);
+        const errorText = timedOut ? timeoutErrorMessage() : String(err);
         state.deps.log.warn(
           { jobId: id, jobName: job.name, timeoutMs: jobTimeoutMs ?? null },
           `cron: job failed: ${errorText}`,
@@ -712,6 +704,7 @@ export async function onTimer(state: CronServiceState) {
           jobId: id,
           status: "error",
           error: errorText,
+          errorKind: timedOut ? "isolated-runner-timeout" : undefined,
           startedAt,
           endedAt: state.deps.nowMs(),
         };
@@ -1002,6 +995,7 @@ async function runStartupCatchupCandidate(
       jobId: candidate.jobId,
       status: result.status,
       error: result.error,
+      errorKind: result.errorKind,
       summary: result.summary,
       delivered: result.delivered,
       sessionId: result.sessionId,
@@ -1013,10 +1007,12 @@ async function runStartupCatchupCandidate(
       endedAt: state.deps.nowMs(),
     };
   } catch (err) {
+    const timedOut = isAbortError(err);
     return {
       jobId: candidate.jobId,
       status: "error",
-      error: String(err),
+      error: timedOut ? timeoutErrorMessage() : String(err),
+      errorKind: timedOut ? "isolated-runner-timeout" : undefined,
       startedAt,
       endedAt: state.deps.nowMs(),
     };
@@ -1081,6 +1077,7 @@ export async function executeJobCore(
   const resolveAbortError = () => ({
     status: "error" as const,
     error: timeoutErrorMessage(),
+    errorKind: "isolated-runner-timeout" as const,
   });
   const waitWithAbort = async (ms: number) => {
     if (!abortSignal) {
@@ -1206,12 +1203,17 @@ export async function executeJobCore(
   });
 
   if (abortSignal?.aborted) {
-    return { status: "error", error: timeoutErrorMessage() };
+    return {
+      status: "error",
+      error: timeoutErrorMessage(),
+      errorKind: "isolated-runner-timeout",
+    };
   }
 
   return {
     status: res.status,
     error: res.error,
+    errorKind: res.errorKind,
     summary: res.summary,
     delivered: res.delivered,
     deliveryAttempted: res.deliveryAttempted,
