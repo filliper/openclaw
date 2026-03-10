@@ -106,7 +106,22 @@ describe("acp translator cancel and run scoping", () => {
     await expect(pending.promptPromise).resolves.toEqual({ stopReason: "cancelled" });
   });
 
-  it("cancel omits runId when there is no active run", async () => {
+  it("cancel uses pending runId when there is no active run", async () => {
+    const sessionKey = "agent:main:shared";
+    const harness = createHarness([{ sessionId: "session-1", sessionKey }]);
+    const pending = await startPendingPrompt(harness, "session-1");
+    harness.sessionStore.clearActiveRun("session-1");
+
+    await harness.agent.cancel({ sessionId: "session-1" } as CancelNotification);
+
+    expect(harness.requestSpy).toHaveBeenCalledWith("chat.abort", {
+      sessionKey,
+      runId: pending.runId,
+    });
+    await expect(pending.promptPromise).resolves.toEqual({ stopReason: "cancelled" });
+  });
+
+  it("cancel skips chat.abort when there is no active run and no pending prompt", async () => {
     const sessionKey = "agent:main:shared";
     const harness = createHarness([{ sessionId: "session-1", sessionKey }]);
 
