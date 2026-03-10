@@ -58,6 +58,15 @@ const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 
+const OPEN_APPEND_EXISTING_FLAGS =
+  fsConstants.O_WRONLY | fsConstants.O_APPEND | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
+const OPEN_APPEND_CREATE_FLAGS =
+  fsConstants.O_WRONLY |
+  fsConstants.O_APPEND |
+  fsConstants.O_CREAT |
+  fsConstants.O_EXCL |
+  (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
+
 const ensureTrailingSep = (value: string) => (value.endsWith(path.sep) ? value : value + path.sep);
 
 async function expandRelativePathWithHome(relativePath: string): Promise<string> {
@@ -530,6 +539,136 @@ export async function writeFileWithinRoot(params: {
     if (tempPath) {
       await fs.rm(tempPath, { force: true }).catch(() => {});
     }
+  }
+}
+
+export async function appendFileWithinRoot(params: {
+  rootDir: string;
+  relativePath: string;
+  data: string | Buffer;
+  encoding?: BufferEncoding;
+  mkdir?: boolean;
+  mode?: number;
+}): Promise<{
+  createdForWrite: boolean;
+  openedRealPath: string;
+  openedStat: import("node:fs").Stats;
+}> {
+  const { rootReal, rootWithSep, resolved } = await resolvePathWithinRoot({
+    rootDir: params.rootDir,
+    relativePath: params.relativePath,
+  });
+  try {
+    await assertNoPathAliasEscape({
+      absolutePath: resolved,
+      rootPath: rootReal,
+      boundaryLabel: "root",
+    });
+  } catch (err) {
+    throw new SafeOpenError("invalid-path", "path alias escape blocked", { cause: err });
+  }
+
+  if (params.mkdir !== false) {
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+  }
+
+  let ioPath = resolved;
+  try {
+    const resolvedRealPath = await fs.realpath(resolved);
+    if (!isPathInside(rootWithSep, resolvedRealPath)) {
+      throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+    }
+    ioPath = resolvedRealPath;
+  } catch (err) {
+    if (err instanceof SafeOpenError) {
+      throw err;
+    }
+    if (!isNotFoundPathError(err)) {
+      throw err;
+    }
+  }
+
+  const fileMode = params.mode ?? 0o600;
+
+  let handle: FileHandle;
+  let createdForWrite = false;
+  try {
+    try {
+      handle = await fs.open(ioPath, OPEN_APPEND_EXISTING_FLAGS, fileMode);
+    } catch (err) {
+      if (!isNotFoundPathError(err)) {
+        throw err;
+      }
+      handle = await fs.open(ioPath, OPEN_APPEND_CREATE_FLAGS, fileMode);
+      createdForWrite = true;
+    }
+  } catch (err) {
+    if (isNotFoundPathError(err)) {
+      throw new SafeOpenError("not-found", "file not found");
+    }
+    if (isSymlinkOpenError(err)) {
+      throw new SafeOpenError("invalid-path", "symlink open blocked", { cause: err });
+    }
+    throw err;
+  }
+
+  let openedRealPath: string | null = null;
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) {
+      throw new SafeOpenError("invalid-path", "path is not a regular file under root");
+    }
+    if (stat.nlink > 1) {
+      throw new SafeOpenError("invalid-path", "hardlinked path not allowed");
+    }
+
+    try {
+      const lstat = await fs.lstat(ioPath);
+      if (lstat.isSymbolicLink() || !lstat.isFile()) {
+        throw new SafeOpenError("invalid-path", "path is not a regular file under root");
+      }
+      if (!sameFileIdentity(stat, lstat)) {
+        throw new SafeOpenError("path-mismatch", "path changed during append");
+      }
+    } catch (err) {
+      if (!isNotFoundPathError(err)) {
+        throw err;
+      }
+    }
+
+    const realPath = await resolveOpenedFileRealPathForHandle(handle, ioPath);
+    openedRealPath = realPath;
+    const realStat = await fs.stat(realPath);
+    if (!sameFileIdentity(stat, realStat)) {
+      throw new SafeOpenError("path-mismatch", "path mismatch");
+    }
+    if (realStat.nlink > 1) {
+      throw new SafeOpenError("invalid-path", "hardlinked path not allowed");
+    }
+    if (!isPathInside(rootWithSep, realPath)) {
+      throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+    }
+
+    if (typeof params.data === "string") {
+      await handle.writeFile(
+        params.data,
+        params.encoding ? { encoding: params.encoding } : undefined,
+      );
+    } else {
+      await handle.writeFile(params.data);
+    }
+
+    return { createdForWrite, openedRealPath: realPath, openedStat: stat };
+  } catch (err) {
+    const cleanupCreatedPath = createdForWrite && err instanceof SafeOpenError;
+    const cleanupPath = openedRealPath ?? ioPath;
+    await handle.close().catch(() => {});
+    if (cleanupCreatedPath) {
+      await fs.rm(cleanupPath, { force: true }).catch(() => {});
+    }
+    throw err;
+  } finally {
+    await handle.close().catch(() => {});
   }
 }
 

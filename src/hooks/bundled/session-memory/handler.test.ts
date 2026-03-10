@@ -242,6 +242,60 @@ describe("session-memory hook", () => {
     expect(memoryContent).toContain("assistant: Captured before reset");
   });
 
+  it("appends multiple sessions into the same daily memory file", async () => {
+    vi.useFakeTimers();
+    try {
+      const tempDir = await createCaseWorkspace("workspace");
+      const sessionsDir = path.join(tempDir, "sessions");
+      await fs.mkdir(sessionsDir, { recursive: true });
+
+      vi.setSystemTime(new Date("2026-03-10T00:00:00Z"));
+      const sessionFile1 = await writeWorkspaceFile({
+        dir: sessionsDir,
+        name: "s1.jsonl",
+        content: createMockSessionContent([
+          { role: "user", content: "First" },
+          { role: "assistant", content: "One" },
+        ]),
+      });
+      await runNewWithPreviousSessionEntry({
+        tempDir,
+        previousSessionEntry: { sessionId: "s1", sessionFile: sessionFile1 },
+      });
+
+      vi.setSystemTime(new Date("2026-03-10T00:01:00Z"));
+      const sessionFile2 = await writeWorkspaceFile({
+        dir: sessionsDir,
+        name: "s2.jsonl",
+        content: createMockSessionContent([
+          { role: "user", content: "Second" },
+          { role: "assistant", content: "Two" },
+        ]),
+      });
+      await runNewWithPreviousSessionEntry({
+        tempDir,
+        previousSessionEntry: { sessionId: "s2", sessionFile: sessionFile2 },
+      });
+
+      const memoryDir = path.join(tempDir, "memory");
+      const files = await fs.readdir(memoryDir);
+      expect(files).toEqual(["2026-03-10.md"]);
+      const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
+
+      expect(memoryContent).toContain("# 2026-03-10");
+      expect(memoryContent).toContain("user: First");
+      expect(memoryContent).toContain("assistant: One");
+      expect(memoryContent).toContain("user: Second");
+      expect(memoryContent).toContain("assistant: Two");
+      expect(memoryContent).toContain("### Conversation Summary");
+
+      const sessionHeadings = (memoryContent.match(/## Session:/g) ?? []).length;
+      expect(sessionHeadings).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("filters out non-message entries (tool calls, system)", async () => {
     // Create session with mixed entry types
     const sessionContent = createMockSessionContent([
