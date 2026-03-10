@@ -14,6 +14,19 @@ describe("buildRescueProfileEnv", () => {
     expect(env.OPENCLAW_STATE_DIR).toBe("/srv/openclaw-home/.openclaw-work");
     expect(env.OPENCLAW_CONFIG_PATH).toBe("/srv/openclaw-home/.openclaw-work/openclaw.json");
   });
+
+  it("preserves daemon service identity overrides", () => {
+    const env = buildRescueProfileEnv("work", {
+      HOME: "/home/tester",
+      OPENCLAW_LAUNCHD_LABEL: "com.example.openclaw-work",
+      OPENCLAW_SYSTEMD_UNIT: "openclaw-work-custom.service",
+      OPENCLAW_WINDOWS_TASK_NAME: "OpenClaw Gateway (work custom)",
+    });
+
+    expect(env.OPENCLAW_LAUNCHD_LABEL).toBe("com.example.openclaw-work");
+    expect(env.OPENCLAW_SYSTEMD_UNIT).toBe("openclaw-work-custom.service");
+    expect(env.OPENCLAW_WINDOWS_TASK_NAME).toBe("OpenClaw Gateway (work custom)");
+  });
 });
 
 describe("canEnableRescueWatchdog", () => {
