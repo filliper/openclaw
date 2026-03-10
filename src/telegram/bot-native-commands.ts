@@ -448,6 +448,8 @@ export const registerTelegramNativeCommands = ({
     commandsToRegister,
     accountId,
     botIdentity: opts.token,
+    nativeEnabled,
+    nativeSkillsEnabled,
   });
 
   const resolveCommandRuntimeContext = async (params: {
