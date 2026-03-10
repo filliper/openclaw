@@ -74,7 +74,7 @@ describe("fs-retry", () => {
       expect(fs.readFileSync(filePath, "utf8")).toBe("line1\nline2\n");
     });
 
-    it("retries on EPERM and succeeds", () => {
+    it("retries on EPERM and succeeds (Windows) or throws immediately (POSIX)", () => {
       const filePath = path.join(tmpDir, "append.txt");
       fs.writeFileSync(filePath, "", "utf8");
       let attempt = 0;
@@ -89,8 +89,14 @@ describe("fs-retry", () => {
         return originalAppendFileSync.call(fs, ...(args as Parameters<typeof fs.appendFileSync>));
       });
 
-      appendFileSyncRetry(filePath, "data", { encoding: "utf8" });
-      expect(attempt).toBe(2);
+      if (os.platform() === "win32") {
+        appendFileSyncRetry(filePath, "data", { encoding: "utf8" });
+        expect(attempt).toBe(2);
+      } else {
+        // On POSIX, EPERM is a real permission error — no retry
+        expect(() => appendFileSyncRetry(filePath, "data", { encoding: "utf8" })).toThrow("EPERM");
+        expect(attempt).toBe(1);
+      }
     });
   });
 
@@ -101,7 +107,7 @@ describe("fs-retry", () => {
       expect(fs.readFileSync(filePath, "utf8")).toBe("hello-async");
     });
 
-    it("retries on EACCES and succeeds", async () => {
+    it("retries on EACCES (Windows) or throws immediately (POSIX)", async () => {
       const filePath = path.join(tmpDir, "async-test.txt");
       let attempt = 0;
       const originalWriteFile = fs.promises.writeFile;
@@ -118,9 +124,15 @@ describe("fs-retry", () => {
         );
       });
 
-      await writeFileRetry(filePath, "hello-async", "utf8");
-      expect(fs.readFileSync(filePath, "utf8")).toBe("hello-async");
-      expect(attempt).toBe(2);
+      if (os.platform() === "win32") {
+        await writeFileRetry(filePath, "hello-async", "utf8");
+        expect(fs.readFileSync(filePath, "utf8")).toBe("hello-async");
+        expect(attempt).toBe(2);
+      } else {
+        // On POSIX, EACCES is a real permission error — no retry
+        await expect(writeFileRetry(filePath, "hello-async", "utf8")).rejects.toThrow("EACCES");
+        expect(attempt).toBe(1);
+      }
     });
   });
 

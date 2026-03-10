@@ -12,7 +12,14 @@
 import fs from "node:fs";
 import os from "node:os";
 
-const RETRYABLE_CODES = new Set(["EBUSY", "EACCES", "EPERM"]);
+/**
+ * On Windows, EACCES/EPERM are commonly transient lock errors from
+ * AV/cloud-sync. On Linux/macOS they indicate real permission errors
+ * and should not be retried.
+ */
+const RETRYABLE_CODES_WIN = new Set(["EBUSY", "EACCES", "EPERM"]);
+const RETRYABLE_CODES_POSIX = new Set(["EBUSY"]);
+const RETRYABLE_CODES = os.platform() === "win32" ? RETRYABLE_CODES_WIN : RETRYABLE_CODES_POSIX;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 50;
 
@@ -132,6 +139,17 @@ export async function renameRetry(src: string, dest: string): Promise<void> {
       // Windows fallback: copy + unlink when rename fails (EPERM on
       // non-Windows is a real permission error, not a transient lock)
       if ((code === "EPERM" || code === "EEXIST") && os.platform() === "win32") {
+        // Refuse to overwrite symlinks to prevent arbitrary file writes (CWE-59)
+        try {
+          const st = await fs.promises.lstat(dest);
+          if (st.isSymbolicLink()) {
+            throw new Error(`Refusing to write through symlink: ${dest}`, { cause: err });
+          }
+        } catch (e: unknown) {
+          if ((e as { code?: string }).code !== "ENOENT") {
+            throw e as Error;
+          }
+        }
         await fs.promises.copyFile(src, dest);
         await fs.promises.unlink(src).catch(() => {});
         return;
