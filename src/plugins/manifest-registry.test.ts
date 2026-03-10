@@ -208,6 +208,37 @@ describe("loadPluginManifestRegistry", () => {
     expect(countDuplicateWarnings(loadRegistry(candidates))).toBe(0);
   });
 
+  it("prefers higher-precedence origins for truly distinct plugins with the same id", () => {
+    const dirA = makeTempDir();
+    const dirB = makeTempDir();
+    const manifest = { id: "ranked-duplicate", configSchema: { type: "object" } };
+    writeManifest(dirA, manifest);
+    writeManifest(dirB, manifest);
+
+    const candidates: PluginCandidate[] = [
+      createPluginCandidate({
+        idHint: "ranked-duplicate",
+        rootDir: dirA,
+        origin: "bundled",
+      }),
+      createPluginCandidate({
+        idHint: "ranked-duplicate",
+        rootDir: dirB,
+        origin: "config",
+      }),
+    ];
+
+    const registry = loadRegistry(candidates);
+    expect(countDuplicateWarnings(registry)).toBe(1);
+    expect(registry.plugins).toHaveLength(1);
+    expect(registry.plugins[0]?.origin).toBe("config");
+    const warning = registry.diagnostics.find(
+      (diagnostic) => diagnostic.pluginId === "ranked-duplicate",
+    );
+    expect(warning?.level).toBe("warn");
+    expect(warning?.source).toBe(path.join(dirA, "index.ts"));
+  });
+
   it("prefers higher-precedence origins for the same physical directory (config > workspace > global > bundled)", () => {
     const dir = makeTempDir();
     fs.mkdirSync(path.join(dir, "sub"), { recursive: true });
