@@ -24,11 +24,12 @@ async function getPluginTtsProviderOverrides(): Promise<Record<string, TtsProvid
       if (!hasTtsCapability || !p.textToSpeech) {
         continue;
       }
+      const normalizedId = normalizeProviderId(p.id);
       const provider: TtsProvider = {
-        id: p.id,
+        id: normalizedId,
         textToSpeech: p.textToSpeech,
       };
-      overrides[normalizeProviderId(p.id)] = provider;
+      overrides[normalizedId] = provider;
     }
 
     return overrides;

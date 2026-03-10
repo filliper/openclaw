@@ -7,6 +7,13 @@ async function invalidatePluginCaches(): Promise<void> {
   } catch {
     // TTS providers may not be available in all contexts
   }
+  try {
+    const { invalidateMediaProviderCache } =
+      await import("../media-understanding/providers/index.js");
+    invalidateMediaProviderCache();
+  } catch {
+    // media providers may not be available in all contexts
+  }
 }
 
 const REGISTRY_STATE = Symbol.for("openclaw.pluginRegistryState");
