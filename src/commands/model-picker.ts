@@ -351,8 +351,8 @@ export async function promptDefaultModel(
       agentDir,
     });
 
-    if (!vllmSelection) {
-      return {};
+    if (!vllmSelection.modelRef) {
+      return vllmSelection.config === cfg ? {} : { config: vllmSelection.config };
     }
 
     return { model: vllmSelection.modelRef, config: vllmSelection.config };

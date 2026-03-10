@@ -344,7 +344,7 @@ describe("promptAndConfigureVllm", () => {
       agentDir: "/tmp/openclaw-agent",
     });
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ config: { models: {} } });
     expect(updateAuthProfileStoreWithLock).toHaveBeenCalled();
   });
 });

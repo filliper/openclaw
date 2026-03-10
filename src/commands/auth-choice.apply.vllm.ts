@@ -37,8 +37,8 @@ export async function applyAuthChoiceVllm(
     agentDir: params.agentDir,
   });
 
-  if (!vllmSelection) {
-    return { config: params.config };
+  if (!vllmSelection.modelRef) {
+    return { config: vllmSelection.config };
   }
 
   const { config: nextConfig, modelRef } = vllmSelection;
