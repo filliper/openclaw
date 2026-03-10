@@ -1,4 +1,4 @@
-import type { Model } from "@mariozechner/pi-ai/dist/types.js";
+import type { Model } from "@mariozechner/pi-ai";
 import { expect } from "vitest";
 import { makeZeroUsageSnapshot } from "../agents/usage.js";
 
@@ -73,4 +73,11 @@ export function makeGeminiCliAssistantMessage(model: string, content: unknown) {
     stopReason: "stop",
     timestamp: 0,
   };
+}
+
+export function expectConvertedRoles(contents: Array<{ role?: string }>, expectedRoles: string[]) {
+  expect(contents).toHaveLength(expectedRoles.length);
+  for (const [index, role] of expectedRoles.entries()) {
+    expect(contents[index]?.role).toBe(role);
+  }
 }

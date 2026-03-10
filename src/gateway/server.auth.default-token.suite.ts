@@ -67,6 +67,14 @@ export function registerDefaultAuthTokenSuite(): void {
       await new Promise<void>((resolve) => ws.once("close", () => resolve()));
     }
 
+    async function expectStatusMissingScopeButHealthAvailable(ws: WebSocket): Promise<void> {
+      const status = await rpcReq(ws, "status");
+      expect(status.ok).toBe(false);
+      expect(status.error?.message).toContain("missing scope");
+      const health = await rpcReq(ws, "health");
+      expect(health.ok).toBe(true);
+    }
+
     test("closes silent handshakes after timeout", async () => {
       vi.useRealTimers();
       const prevHandshakeTimeout = process.env.OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS;
@@ -86,7 +94,7 @@ export function registerDefaultAuthTokenSuite(): void {
     });
 
     test("connect (req) handshake returns hello-ok payload", async () => {
-      const { CONFIG_PATH, STATE_DIR } = await import("../config/config.js");
+      const { STATE_DIR, createConfigIO } = await import("../config/config.js");
       const ws = await openWs(port);
 
       const res = await connectReq(ws);
@@ -98,13 +106,14 @@ export function registerDefaultAuthTokenSuite(): void {
           }
         | undefined;
       expect(payload?.type).toBe("hello-ok");
-      expect(payload?.snapshot?.configPath).toBe(CONFIG_PATH);
+      expect(payload?.snapshot?.configPath).toBe(createConfigIO().configPath);
       expect(payload?.snapshot?.stateDir).toBe(STATE_DIR);
 
       ws.close();
     });
 
-    test("connect (req) handshake resolves server version from env precedence", async () => {
+    test("connect (req) handshake resolves server version from runtime precedence", async () => {
+      const { VERSION } = await import("../version.js");
       for (const testCase of [
         {
           env: {
@@ -112,7 +121,7 @@ export function registerDefaultAuthTokenSuite(): void {
             OPENCLAW_SERVICE_VERSION: "2.4.6-service",
             npm_package_version: "1.0.0-package",
           },
-          expectedVersion: "2.4.6-service",
+          expectedVersion: VERSION,
         },
         {
           env: {
@@ -128,7 +137,7 @@ export function registerDefaultAuthTokenSuite(): void {
             OPENCLAW_SERVICE_VERSION: "\t",
             npm_package_version: "1.0.0-package",
           },
-          expectedVersion: "1.0.0-package",
+          expectedVersion: VERSION,
         },
       ]) {
         await withRuntimeVersionEnv(testCase.env, async () =>
@@ -198,11 +207,7 @@ export function registerDefaultAuthTokenSuite(): void {
       try {
         const res = await connectReq(ws, { scopes: [] });
         expect(res.ok).toBe(true);
-        const status = await rpcReq(ws, "status");
-        expect(status.ok).toBe(false);
-        expect(status.error?.message).toContain("missing scope");
-        const health = await rpcReq(ws, "health");
-        expect(health.ok).toBe(true);
+        await expectStatusMissingScopeButHealthAvailable(ws);
       } finally {
         ws.close();
       }
@@ -247,11 +252,7 @@ export function registerDefaultAuthTokenSuite(): void {
       expect(presenceScopes).toEqual([]);
       expect(presenceScopes).not.toContain("operator.admin");
 
-      const status = await rpcReq(ws, "status");
-      expect(status.ok).toBe(false);
-      expect(status.error?.message).toContain("missing scope");
-      const health = await rpcReq(ws, "health");
-      expect(health.ok).toBe(true);
+      await expectStatusMissingScopeButHealthAvailable(ws);
 
       ws.close();
     });
