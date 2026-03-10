@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { markdownToTelegramHtml, markdownToTelegramHtmlChunks } from "./format.js";
+import {
+  markdownToTelegramChunks,
+  markdownToTelegramHtml,
+  markdownToTelegramHtmlChunks,
+} from "./format.js";
 
 describe("markdownToTelegramHtml", () => {
   it("handles core markdown-to-telegram conversions", () => {
@@ -150,10 +154,10 @@ describe("markdownToTelegramHtmlChunks word-boundary splitting", () => {
 
   it("handles newlines by splitting on \n when possible", () => {
     const text = "first line\nsecond line with beta token\nthird line";
-    const chunks = markdownToTelegramHtmlChunks(text, 25);
+    const chunks = markdownToTelegramChunks(text, 25);
     expect(chunks.length).toBeGreaterThan(1);
-    // Preserve all characters (no loss).
-    expect(chunks.join("")).toBe(text);
+    // Preserve all characters (no loss) on the plain-text side.
+    expect(chunks.map((c) => c.text).join("")).toBe(text);
   });
 
   it("falls back to hard split when there is no whitespace", () => {
