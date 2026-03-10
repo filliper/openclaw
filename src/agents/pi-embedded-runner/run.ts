@@ -1286,6 +1286,7 @@ export async function runEmbeddedPiAgent(
             // are configured so outer model fallback can continue on overload,
             // rate-limit, auth, or billing failures.
             if (fallbackConfigured && promptFailoverFailure) {
+              maybeNotifyUserOfApiError(promptFailoverReason ?? "service_error", attempt);
               await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
               throw new FailoverError(errorText, {
                 reason: promptFailoverReason ?? "unknown",
@@ -1382,6 +1383,7 @@ export async function runEmbeddedPiAgent(
             }
 
             if (fallbackConfigured) {
+              maybeNotifyUserOfApiError(assistantFailoverReason ?? "service_error", attempt);
               await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
               // Prefer formatted error message (user-friendly) over raw errorMessage
               const message =
