@@ -9,6 +9,15 @@ let lastAppliedDispatcherKey: string | null = null;
 
 type DispatcherKind = "agent" | "env-proxy" | "unsupported";
 
+function hasEnvHttpProxyConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(
+    env.HTTPS_PROXY?.trim() ||
+    env.HTTP_PROXY?.trim() ||
+    env.https_proxy?.trim() ||
+    env.http_proxy?.trim(),
+  );
+}
+
 function resolveDispatcherKind(dispatcher: unknown): DispatcherKind {
   const ctorName = (dispatcher as { constructor?: { name?: string } })?.constructor?.name;
   if (typeof ctorName !== "string" || ctorName.length === 0) {
@@ -78,15 +87,18 @@ export function ensureGlobalUndiciStreamTimeouts(opts?: { timeoutMs?: number }):
     return;
   }
 
+  const targetKind: DispatcherKind =
+    kind === "env-proxy" || hasEnvHttpProxyConfigured() ? "env-proxy" : "agent";
+
   const autoSelectFamily = resolveAutoSelectFamily();
-  const nextKey = resolveDispatcherKey({ kind, timeoutMs, autoSelectFamily });
+  const nextKey = resolveDispatcherKey({ kind: targetKind, timeoutMs, autoSelectFamily });
   if (lastAppliedDispatcherKey === nextKey) {
     return;
   }
 
   const connect = resolveConnectOptions(autoSelectFamily);
   try {
-    if (kind === "env-proxy") {
+    if (targetKind === "env-proxy") {
       const proxyOptions = {
         bodyTimeout: timeoutMs,
         headersTimeout: timeoutMs,
