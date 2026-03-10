@@ -58,6 +58,7 @@ type ProviderAuthConfigSnapshot = {
       }
     >;
   };
+  talk?: unknown;
 };
 
 async function removeDirWithRetry(dir: string): Promise<void> {
