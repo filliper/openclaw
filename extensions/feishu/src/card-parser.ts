@@ -88,7 +88,10 @@ function parseFeishuCardToMarkdown(obj: CardElement | null | undefined, depth = 
       }
 
       case "heading": {
-        const level = (obj.level as number) || 1;
+        const level =
+          (obj.level as number) ||
+          ((obj.property as Record<string, unknown>)?.level as number) ||
+          1;
         const content = getContent(obj);
         if (content) return `${"#".repeat(level)} ${content}\n`;
         const elems = getElements(obj);
@@ -158,7 +161,14 @@ function parseFeishuCardToMarkdown(obj: CardElement | null | undefined, depth = 
             })
             .join(" ");
         }
-        return "";
+        // Fallback: render button text without a URL
+        const textObj = text as Record<string, unknown> | undefined;
+        const textProp = textObj?.property as CardElement | undefined;
+        const btnText =
+          typeof text === "string"
+            ? text
+            : (textProp?.content as string) || (textObj?.content as string) || "";
+        return btnText;
       }
 
       case "action_link": {
@@ -229,7 +239,8 @@ function parseFeishuCardToMarkdown(obj: CardElement | null | undefined, depth = 
               return ((inner as Record<string, unknown>).content as string) || "";
             })
             .join("");
-          return `\n\`\`\`\n${text}\n\`\`\`\n`;
+          const language = property?.language as string | undefined;
+          return `\n\`\`\`${language || ""}\n${text}\n\`\`\`\n`;
         }
         return "";
       }

@@ -2,24 +2,24 @@
 
 ---
 
-# 1. Introduction
+## 1. Introduction
 
 Welcome to the API Integration Guide. This document provides comprehensive documentation for developers integrating with our REST API.Note:
 This is a sample document with rich formatting for demonstration purposes.
 
 ---
 
-# 2. Installation
+## 2. Installation
 
-# Prerequisites
+### Prerequisites
 
 - Node.js 18+
 - npm or yarn
 - API Key
 
-# Quick Start
+### Quick Start
 
-```
+```bash
 # Install the SDK
 npm install @example/api-sdk
 
@@ -33,9 +33,9 @@ const client = new api.Client({
 
 ---
 
-# 3. API Reference
+## 3. API Reference
 
-# Endpoints
+### Endpoints
 
 | Method | Endpoint     | Description       |
 | ------ | ------------ | ----------------- |
@@ -45,19 +45,18 @@ const client = new api.Client({
 | PUT    | `/users/:id` | Update user       |
 | DELETE | `/users/:id` | Delete user       |
 
-# Request Example
+### Request Example
 
-```
+```javascript
 // Fetch user data
-const response = await client.get('/users/123');
+const response = await client.get("/users/123");
 console.log(response.data);
 // Output: { id: 123, name: "John", email: "john@example.com" }
-
 ```
 
 ---
 
-# 4. Configuration Options
+## 4. Configuration Options
 
 - timeout: Request timeout in milliseconds (default: 30000)
 - retries: Number of retry attempts (default: 3)
@@ -66,22 +65,21 @@ console.log(response.data);
 
 ---
 
-# 5. Error Handling
+## 5. Error Handling
 
-```
+```javascript
 try {
-  const user = await client.get('/users/999');
+  const user = await client.get("/users/999");
 } catch (error) {
   if (error.code === 404) {
-    console.log('User not found');
+    console.log("User not found");
   } else if (error.code === 401) {
-    console.log('Authentication failed');
+    console.log("Authentication failed");
   }
 }
-
 ```
 
-# Error Codes
+### Error Codes
 
 | Code | Meaning      |
 | ---- | ------------ |
@@ -93,7 +91,7 @@ try {
 
 ---
 
-# 6. Best Practices
+## 6. Best Practices
 
 1. Always use environment variables for API keys
 2. Implement proper error handling
@@ -103,7 +101,7 @@ try {
 
 ---
 
-# 7. Support
+## 7. Support
 
 - 📧 Email: support@example.com
 - 💬 Discord: [Join Community](https://discord.gg/example)
