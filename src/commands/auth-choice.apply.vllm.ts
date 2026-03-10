@@ -31,11 +31,17 @@ export async function applyAuthChoiceVllm(
     return null;
   }
 
-  const { config: nextConfig, modelRef } = await promptAndConfigureVllm({
+  const vllmSelection = await promptAndConfigureVllm({
     cfg: params.config,
     prompter: params.prompter,
     agentDir: params.agentDir,
   });
+
+  if (!vllmSelection) {
+    return { config: params.config };
+  }
+
+  const { config: nextConfig, modelRef } = vllmSelection;
 
   if (!params.setDefaultModel) {
     return { config: nextConfig, agentModelOverride: modelRef };

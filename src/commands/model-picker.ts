@@ -345,13 +345,17 @@ export async function promptDefaultModel(
       );
       return {};
     }
-    const { config: nextConfig, modelRef } = await promptAndConfigureVllm({
+    const vllmSelection = await promptAndConfigureVllm({
       cfg,
       prompter: params.prompter,
       agentDir,
     });
 
-    return { model: modelRef, config: nextConfig };
+    if (!vllmSelection) {
+      return {};
+    }
+
+    return { model: vllmSelection.modelRef, config: vllmSelection.config };
   }
   return { model: String(selection) };
 }
