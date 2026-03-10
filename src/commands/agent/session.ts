@@ -21,7 +21,7 @@ import {
   resolveStorePath,
   type SessionEntry,
 } from "../../config/sessions.js";
-import { normalizeMainKey } from "../../routing/session-key.js";
+import { normalizeAgentId, normalizeMainKey, toAgentStoreSessionKey } from "../../routing/session-key.js";
 
 export type SessionResolution = {
   sessionId: string;
@@ -50,21 +50,34 @@ export function resolveSessionKeyForRequest(opts: {
   const sessionCfg = opts.cfg.session;
   const scope = sessionCfg?.scope ?? "per-sender";
   const mainKey = normalizeMainKey(sessionCfg?.mainKey);
-  const explicitSessionKey =
-    opts.sessionKey?.trim() ||
-    resolveExplicitAgentSessionKey({
-      cfg: opts.cfg,
-      agentId: opts.agentId,
-    });
-  const storeAgentId = resolveAgentIdFromSessionKey(explicitSessionKey);
+  const explicitSessionKey = opts.sessionKey?.trim();
+  const normalizedAgentId = opts.agentId ? normalizeAgentId(opts.agentId) : undefined;
+  const explicitAgentSessionKey =
+    explicitSessionKey || opts.to?.trim()
+      ? undefined
+      : resolveExplicitAgentSessionKey({
+          cfg: opts.cfg,
+          agentId: normalizedAgentId,
+        });
+  const storeAgentId = normalizedAgentId ?? resolveAgentIdFromSessionKey(explicitSessionKey);
   const storePath = resolveStorePath(sessionCfg?.store, {
     agentId: storeAgentId,
   });
   const sessionStore = loadSessionStore(storePath);
 
   const ctx: MsgContext | undefined = opts.to?.trim() ? { From: opts.to } : undefined;
+  const derivedToSessionKey =
+    explicitSessionKey || !opts.to?.trim()
+      ? undefined
+      : normalizedAgentId
+        ? toAgentStoreSessionKey({
+            agentId: normalizedAgentId,
+            requestKey: opts.to,
+            mainKey,
+          })
+        : resolveSessionKey(scope, ctx as MsgContext, mainKey);
   let sessionKey: string | undefined =
-    explicitSessionKey ?? (ctx ? resolveSessionKey(scope, ctx, mainKey) : undefined);
+    explicitSessionKey ?? derivedToSessionKey ?? explicitAgentSessionKey;
 
   // If a session id was provided, prefer to re-use its entry (by id) even when no key was derived.
   if (
