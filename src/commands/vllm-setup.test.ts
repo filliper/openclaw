@@ -42,12 +42,16 @@ describe("promptAndConfigureVllm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     ensureAuthProfileStore.mockReturnValue({ version: 1, profiles: {} });
-    listProfilesForProvider.mockImplementation((store, provider) =>
-      Object.entries(store.profiles)
-        .filter(([, credential]) => credential.provider === provider)
-        .map(([profileId]) => profileId),
+    listProfilesForProvider.mockImplementation(
+      (store: { profiles: Record<string, { provider: string }> }, provider: string) =>
+        Object.entries(store.profiles)
+          .filter(([, credential]) => credential.provider === provider)
+          .map(([profileId]) => profileId),
     );
-    resolveApiKeyForProfile.mockResolvedValue({ apiKey: "stored-vllm-key", provider: "vllm" });
+    resolveApiKeyForProfile.mockResolvedValue({
+      apiKey: "stored-vllm-key", // pragma: allowlist secret
+      provider: "vllm",
+    });
     buildVllmProvider.mockResolvedValue({
       baseUrl: "http://127.0.0.1:8000/v1",
       api: "openai-completions",
@@ -62,7 +66,7 @@ describe("promptAndConfigureVllm", () => {
         "vllm:default": {
           type: "api_key",
           provider: "vllm",
-          key: "stored-vllm-key",
+          key: "stored-vllm-key", // pragma: allowlist secret
           metadata: { kind: "vllm", baseUrl: "http://gpu-box:8000/v1" },
         },
       },
@@ -114,7 +118,7 @@ describe("promptAndConfigureVllm", () => {
     const text = vi
       .fn()
       .mockResolvedValueOnce("http://127.0.0.1:8000/v1")
-      .mockResolvedValueOnce("sk-vllm-test");
+      .mockResolvedValueOnce("sk-vllm-test"); // pragma: allowlist secret
     const multiselect = vi.fn().mockResolvedValue(["model-a", "model-b"]);
     const prompter = makePrompter({ select, text: text as never, multiselect });
 
@@ -126,7 +130,7 @@ describe("promptAndConfigureVllm", () => {
 
     expect(buildVllmProvider).toHaveBeenCalledWith({
       baseUrl: "http://127.0.0.1:8000/v1",
-      apiKey: "sk-vllm-test",
+      apiKey: "sk-vllm-test", // pragma: allowlist secret
     });
     expect(result.modelRef).toBe("vllm/model-b");
     expect(result.config.models?.providers?.vllm?.models).toEqual([
@@ -142,7 +146,7 @@ describe("promptAndConfigureVllm", () => {
         "vllm:default": {
           type: "api_key",
           provider: "vllm",
-          key: "stored-vllm-key",
+          key: "stored-vllm-key", // pragma: allowlist secret
           metadata: { kind: "vllm", baseUrl: "http://gpu-a:8000/v1" },
         },
       },
@@ -157,7 +161,7 @@ describe("promptAndConfigureVllm", () => {
     const text = vi
       .fn()
       .mockResolvedValueOnce("http://gpu-b:8000/v1")
-      .mockResolvedValueOnce("sk-vllm-b");
+      .mockResolvedValueOnce("sk-vllm-b"); // pragma: allowlist secret
     const multiselect = vi.fn().mockResolvedValue(["model-c"]);
     const prompter = makePrompter({ select, text: text as never, multiselect });
     const config = {
