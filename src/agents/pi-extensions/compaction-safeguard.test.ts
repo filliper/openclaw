@@ -1528,7 +1528,10 @@ describe("compaction-safeguard double-compaction guard", () => {
     // a boundary entry and break the re-trigger loop.
     expect(result.cancel).not.toBe(true);
     expect(result.compaction).toBeDefined();
-    expect(result.compaction.summary).toBeTruthy();
+    // buildStructuredFallbackSummary(undefined) produces a minimal structured summary
+    expect(result.compaction.summary).toContain("## Decisions");
+    expect(result.compaction.summary).toContain("No prior history.");
+    expect(result.compaction.summary).toContain("## Open TODOs");
     expect(result.compaction.firstKeptEntryId).toBe("entry-1");
     expect(result.compaction.tokensBefore).toBe(1500);
     expect(getApiKeyMock).not.toHaveBeenCalled();
