@@ -13,9 +13,12 @@ const readPackageName = vi.fn();
 const readPackageVersion = vi.fn();
 const resolveGlobalManager = vi.fn();
 const serviceLoaded = vi.fn();
+const serviceStop = vi.fn();
+const serviceRestart = vi.fn();
 const prepareRestartScript = vi.fn();
 const runRestartScript = vi.fn();
 const mockedRunDaemonInstall = vi.fn();
+const mockedRunDaemonStop = vi.fn();
 const serviceReadRuntime = vi.fn();
 const inspectPortUsage = vi.fn();
 const classifyPortListener = vi.fn();
@@ -101,6 +104,8 @@ vi.mock("./update-cli/shared.js", async (importOriginal) => {
 vi.mock("../daemon/service.js", () => ({
   resolveGatewayService: vi.fn(() => ({
     isLoaded: (...args: unknown[]) => serviceLoaded(...args),
+    stop: (...args: unknown[]) => serviceStop(...args),
+    restart: (...args: unknown[]) => serviceRestart(...args),
     readRuntime: (...args: unknown[]) => serviceReadRuntime(...args),
   })),
 }));
@@ -123,6 +128,7 @@ vi.mock("../commands/doctor.js", () => ({
 // Mock the daemon-cli module
 vi.mock("./daemon-cli.js", () => ({
   runDaemonInstall: mockedRunDaemonInstall,
+  runDaemonStop: mockedRunDaemonStop,
   runDaemonRestart: vi.fn(),
 }));
 
@@ -141,7 +147,7 @@ const { readConfigFileSnapshot, writeConfigFile } = await import("../config/conf
 const { checkUpdateStatus, fetchNpmTagVersion, resolveNpmChannelTag } =
   await import("../infra/update-check.js");
 const { runCommandWithTimeout } = await import("../process/exec.js");
-const { runDaemonRestart, runDaemonInstall } = await import("./daemon-cli.js");
+const { runDaemonRestart, runDaemonInstall, runDaemonStop } = await import("./daemon-cli.js");
 const { doctorCommand } = await import("../commands/doctor.js");
 const { defaultRuntime } = await import("../runtime.js");
 const { updateCommand, updateStatusCommand, updateWizardCommand } = await import("./update-cli.js");
@@ -305,6 +311,8 @@ describe("update-cli", () => {
     readPackageVersion.mockResolvedValue("1.0.0");
     resolveGlobalManager.mockResolvedValue("npm");
     serviceLoaded.mockResolvedValue(false);
+    serviceStop.mockResolvedValue(undefined);
+    serviceRestart.mockResolvedValue(undefined);
     serviceReadRuntime.mockResolvedValue({
       status: "running",
       pid: 4242,
@@ -337,6 +345,7 @@ describe("update-cli", () => {
       outcomes: [],
     });
     vi.mocked(runDaemonInstall).mockResolvedValue(undefined);
+    vi.mocked(runDaemonStop).mockResolvedValue(undefined);
     vi.mocked(runDaemonRestart).mockResolvedValue(true);
     vi.mocked(doctorCommand).mockResolvedValue(undefined);
     confirm.mockResolvedValue(false);
@@ -497,6 +506,185 @@ describe("update-cli", () => {
     await updateCommand({});
 
     expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+  });
+
+  it("stops loaded service before package updates on Windows", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      mockPackageInstallStatus(tempDir);
+      serviceLoaded.mockResolvedValue(true);
+      vi.mocked(runGatewayUpdate).mockResolvedValue(
+        makeOkUpdateResult({
+          mode: "npm",
+        }),
+      );
+
+      await updateCommand({});
+
+      expect(runDaemonStop).toHaveBeenCalledWith({
+        json: undefined,
+      });
+      const stopOrder = vi.mocked(runDaemonStop).mock.invocationCallOrder[0];
+      const updateOrder = vi.mocked(runGatewayUpdate).mock.invocationCallOrder[0];
+      expect(stopOrder).toBeLessThan(updateOrder);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("does not forward update --json mode into daemon stop output", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      mockPackageInstallStatus(tempDir);
+      serviceLoaded.mockResolvedValue(true);
+      vi.mocked(runGatewayUpdate).mockResolvedValue(
+        makeOkUpdateResult({
+          mode: "npm",
+        }),
+      );
+
+      await updateCommand({ json: true });
+
+      expect(runDaemonStop).not.toHaveBeenCalled();
+      expect(serviceStop).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: process.env,
+          stdout: expect.anything(),
+        }),
+      );
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("tries to restore service after a failed Windows package update", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      mockPackageInstallStatus(tempDir);
+      serviceLoaded.mockResolvedValue(true);
+      prepareRestartScript.mockResolvedValue(null);
+      vi.mocked(runGatewayUpdate).mockResolvedValue({
+        status: "error",
+        mode: "npm",
+        reason: "global update",
+        steps: [],
+        durationMs: 100,
+      });
+
+      await updateCommand({});
+
+      expect(runDaemonStop).toHaveBeenCalledWith({
+        json: undefined,
+      });
+      expect(runDaemonRestart).toHaveBeenCalled();
+      expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("tries to restore service after a skipped Windows package update", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      mockPackageInstallStatus(tempDir);
+      serviceLoaded.mockResolvedValue(true);
+      prepareRestartScript.mockResolvedValue(null);
+      vi.mocked(runGatewayUpdate).mockResolvedValue({
+        status: "skipped",
+        mode: "npm",
+        reason: "not-git-install",
+        steps: [],
+        durationMs: 100,
+      });
+
+      await updateCommand({});
+
+      expect(runDaemonStop).toHaveBeenCalledWith({
+        json: undefined,
+      });
+      expect(runDaemonRestart).toHaveBeenCalled();
+      expect(defaultRuntime.exit).toHaveBeenCalledWith(0);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("restores service silently in JSON mode after a failed Windows package update", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      mockPackageInstallStatus(tempDir);
+      serviceLoaded.mockResolvedValue(true);
+      prepareRestartScript.mockResolvedValue(null);
+      vi.mocked(runGatewayUpdate).mockResolvedValue({
+        status: "error",
+        mode: "npm",
+        reason: "global update",
+        steps: [],
+        durationMs: 100,
+      });
+
+      await updateCommand({ json: true });
+
+      expect(runDaemonStop).not.toHaveBeenCalled();
+      expect(runDaemonRestart).not.toHaveBeenCalled();
+      expect(serviceStop).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: process.env,
+          stdout: expect.anything(),
+        }),
+      );
+      expect(serviceRestart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: process.env,
+          stdout: expect.anything(),
+        }),
+      );
+      expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("tries to restore service when post-update steps throw after Windows package update", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      mockPackageInstallStatus(tempDir);
+      serviceLoaded.mockResolvedValue(true);
+      prepareRestartScript.mockResolvedValue(null);
+      vi.mocked(runGatewayUpdate).mockResolvedValue(
+        makeOkUpdateResult({
+          mode: "npm",
+        }),
+      );
+      syncPluginsForUpdateChannel.mockRejectedValueOnce(new Error("plugin sync failed"));
+
+      await expect(updateCommand({})).rejects.toThrow("plugin sync failed");
+
+      expect(runDaemonStop).toHaveBeenCalledWith({
+        json: undefined,
+      });
+      expect(runDaemonRestart).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
   });
 
   it("updateCommand refreshes gateway service env when service is already installed", async () => {

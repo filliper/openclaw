@@ -38,7 +38,8 @@ import { pathExists } from "../../utils.js";
 import { replaceCliName, resolveCliName } from "../cli-name.js";
 import { formatCliCommand } from "../command-format.js";
 import { installCompletion } from "../completion-cli.js";
-import { runDaemonInstall, runDaemonRestart } from "../daemon-cli.js";
+import { runDaemonInstall, runDaemonRestart, runDaemonStop } from "../daemon-cli.js";
+import { createNullWriter } from "../daemon-cli/response.js";
 import {
   renderRestartDiagnostics,
   terminateStaleGatewayPids,
@@ -198,6 +199,10 @@ async function refreshGatewayServiceEnv(params: {
     );
   }
 
+  // Avoid emitting extra daemon output in `update --json` mode.
+  if (params.jsonMode) {
+    return;
+  }
   await runDaemonInstall({ force: true, json: params.jsonMode || undefined });
 }
 
@@ -539,7 +544,15 @@ async function maybeRestartService(params: {
         await runRestartScript(params.restartScriptPath);
         restartInitiated = true;
       } else {
-        restarted = await runDaemonRestart();
+        if (params.opts.json) {
+          await resolveGatewayService().restart({
+            env: process.env,
+            stdout: createNullWriter(),
+          });
+          restarted = true;
+        } else {
+          restarted = await runDaemonRestart();
+        }
       }
 
       if (!params.opts.json && restarted) {
@@ -623,6 +636,41 @@ async function maybeRestartService(params: {
           `Tip: Run \`${replaceCliName(formatCliCommand("openclaw gateway restart"), CLI_NAME)}\` to apply updates to a running gateway.`,
         ),
       );
+    }
+  }
+}
+
+async function restoreServiceAfterStoppedWindowsPackageUpdate(params: {
+  shouldRestore: boolean;
+  opts: UpdateCommandOptions;
+  restartScriptPath: string | null;
+}): Promise<void> {
+  if (!params.shouldRestore) {
+    return;
+  }
+
+  if (!params.opts.json) {
+    defaultRuntime.log(
+      theme.warn("Update exited after stopping the service. Attempting to restore it..."),
+    );
+  }
+
+  try {
+    if (params.restartScriptPath) {
+      await runRestartScript(params.restartScriptPath);
+    } else {
+      if (params.opts.json) {
+        await resolveGatewayService().restart({
+          env: process.env,
+          stdout: createNullWriter(),
+        });
+      } else {
+        await runDaemonRestart();
+      }
+    }
+  } catch (err) {
+    if (!params.opts.json) {
+      defaultRuntime.log(theme.warn(`Failed to restore service automatically: ${String(err)}`));
     }
   }
 }
@@ -816,103 +864,156 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
 
   const { progress, stop } = createUpdateProgress(showProgress);
   const startedAt = Date.now();
+  let progressStopped = false;
+  const stopProgress = () => {
+    if (progressStopped) {
+      return;
+    }
+    stop();
+    progressStopped = true;
+  };
 
   let restartScriptPath: string | null = null;
   let refreshGatewayServiceEnv = false;
+  let serviceStoppedForWindowsPackageUpdate = false;
+  let updateResult: UpdateRunResult | null = null;
+  let completedSuccessfully = false;
   const gatewayPort = resolveGatewayPort(
     configSnapshot.valid ? configSnapshot.config : undefined,
     process.env,
   );
-  if (shouldRestart) {
-    try {
-      const loaded = await resolveGatewayService().isLoaded({ env: process.env });
-      if (loaded) {
-        restartScriptPath = await prepareRestartScript(process.env, gatewayPort);
-        refreshGatewayServiceEnv = true;
+  try {
+    if (shouldRestart) {
+      try {
+        const loaded = await resolveGatewayService().isLoaded({ env: process.env });
+        if (loaded) {
+          restartScriptPath = await prepareRestartScript(process.env, gatewayPort);
+          refreshGatewayServiceEnv = true;
+          if (process.platform === "win32" && updateInstallKind === "package") {
+            if (!opts.json) {
+              defaultRuntime.log(
+                theme.muted("Stopping service before package update to release file locks..."),
+              );
+            }
+            try {
+              if (opts.json) {
+                await resolveGatewayService().stop({
+                  env: process.env,
+                  stdout: createNullWriter(),
+                });
+              } else {
+                await runDaemonStop({ json: undefined });
+              }
+              serviceStoppedForWindowsPackageUpdate = true;
+            } catch (err) {
+              defaultRuntime.error(
+                [
+                  `Failed to stop gateway before update: ${String(err)}`,
+                  `Run \`${replaceCliName(formatCliCommand("openclaw gateway stop"), CLI_NAME)}\` and retry.`,
+                ].join("\n"),
+              );
+              defaultRuntime.exit(1);
+              return;
+            }
+          }
+        }
+      } catch {
+        // Ignore errors during pre-check; fallback to standard restart
       }
-    } catch {
-      // Ignore errors during pre-check; fallback to standard restart
     }
-  }
 
-  const result = switchToPackage
-    ? await runPackageInstallUpdate({
-        root,
-        installKind,
-        tag,
-        timeoutMs: timeoutMs ?? 20 * 60_000,
-        startedAt,
-        progress,
-      })
-    : await runGitUpdate({
-        root,
-        switchToGit,
-        installKind,
-        timeoutMs,
-        startedAt,
-        progress,
-        channel,
-        tag,
-        showProgress,
-        opts,
-        stop,
-      });
+    updateResult = switchToPackage
+      ? await runPackageInstallUpdate({
+          root,
+          installKind,
+          tag,
+          timeoutMs: timeoutMs ?? 20 * 60_000,
+          startedAt,
+          progress,
+        })
+      : await runGitUpdate({
+          root,
+          switchToGit,
+          installKind,
+          timeoutMs,
+          startedAt,
+          progress,
+          channel,
+          tag,
+          showProgress,
+          opts,
+          stop: stopProgress,
+        });
 
-  stop();
-  printResult(result, { ...opts, hideSteps: showProgress });
+    stopProgress();
+    printResult(updateResult, { ...opts, hideSteps: showProgress });
 
-  if (result.status === "error") {
-    defaultRuntime.exit(1);
-    return;
-  }
-
-  if (result.status === "skipped") {
-    if (result.reason === "dirty") {
-      defaultRuntime.log(
-        theme.warn(
-          "Skipped: working directory has uncommitted changes. Commit or stash them first.",
-        ),
-      );
+    if (updateResult.status === "error") {
+      defaultRuntime.exit(1);
+      return;
     }
-    if (result.reason === "not-git-install") {
-      defaultRuntime.log(
-        theme.warn(
-          `Skipped: this OpenClaw install isn't a git checkout, and the package manager couldn't be detected. Update via your package manager, then run \`${replaceCliName(formatCliCommand("openclaw doctor"), CLI_NAME)}\` and \`${replaceCliName(formatCliCommand("openclaw gateway restart"), CLI_NAME)}\`.`,
-        ),
-      );
-      defaultRuntime.log(
-        theme.muted(
-          `Examples: \`${replaceCliName("npm i -g openclaw@latest", CLI_NAME)}\` or \`${replaceCliName("pnpm add -g openclaw@latest", CLI_NAME)}\``,
-        ),
-      );
+
+    if (updateResult.status === "skipped") {
+      if (!opts.json) {
+        if (updateResult.reason === "dirty") {
+          defaultRuntime.log(
+            theme.warn(
+              "Skipped: working directory has uncommitted changes. Commit or stash them first.",
+            ),
+          );
+        }
+        if (updateResult.reason === "not-git-install") {
+          defaultRuntime.log(
+            theme.warn(
+              `Skipped: this OpenClaw install isn't a git checkout, and the package manager couldn't be detected. Update via your package manager, then run \`${replaceCliName(formatCliCommand("openclaw doctor"), CLI_NAME)}\` and \`${replaceCliName(formatCliCommand("openclaw gateway restart"), CLI_NAME)}\`.`,
+            ),
+          );
+          defaultRuntime.log(
+            theme.muted(
+              `Examples: \`${replaceCliName("npm i -g openclaw@latest", CLI_NAME)}\` or \`${replaceCliName("pnpm add -g openclaw@latest", CLI_NAME)}\``,
+            ),
+          );
+        }
+      }
+      defaultRuntime.exit(0);
+      return;
     }
-    defaultRuntime.exit(0);
-    return;
-  }
 
-  await updatePluginsAfterCoreUpdate({
-    root,
-    channel,
-    configSnapshot,
-    opts,
-  });
+    await updatePluginsAfterCoreUpdate({
+      root,
+      channel,
+      configSnapshot,
+      opts,
+    });
 
-  await tryWriteCompletionCache(root, Boolean(opts.json));
-  await tryInstallShellCompletion({
-    jsonMode: Boolean(opts.json),
-    skipPrompt: Boolean(opts.yes),
-  });
+    await tryWriteCompletionCache(root, Boolean(opts.json));
+    await tryInstallShellCompletion({
+      jsonMode: Boolean(opts.json),
+      skipPrompt: Boolean(opts.yes),
+    });
 
-  await maybeRestartService({
-    shouldRestart,
-    result,
-    opts,
-    refreshServiceEnv: refreshGatewayServiceEnv,
-    gatewayPort,
-    restartScriptPath,
-  });
+    await maybeRestartService({
+      shouldRestart,
+      result: updateResult,
+      opts,
+      refreshServiceEnv: refreshGatewayServiceEnv,
+      gatewayPort,
+      restartScriptPath,
+    });
+    completedSuccessfully = true;
 
-  if (!opts.json) {
-    defaultRuntime.log(theme.muted(pickUpdateQuip()));
+    if (!opts.json) {
+      defaultRuntime.log(theme.muted(pickUpdateQuip()));
+    }
+  } finally {
+    stopProgress();
+    await restoreServiceAfterStoppedWindowsPackageUpdate({
+      shouldRestore:
+        serviceStoppedForWindowsPackageUpdate &&
+        shouldRestart &&
+        (!completedSuccessfully || (updateResult !== null && updateResult.status !== "ok")),
+      opts,
+      restartScriptPath,
+    });
   }
 }

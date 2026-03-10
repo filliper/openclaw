@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { prepareRestartScript, runRestartScript } from "./restart-helper.js";
 
@@ -19,7 +20,7 @@ describe("restart-helper", () => {
   }
 
   async function cleanupScript(scriptPath: string) {
-    await fs.unlink(scriptPath);
+    await fs.rm(path.dirname(scriptPath), { recursive: true, force: true });
   }
 
   function expectWindowsRestartWaitOrdering(content: string, port = 18789) {
@@ -75,6 +76,7 @@ describe("restart-helper", () => {
       expect(content).toContain("systemctl --user restart 'openclaw-gateway.service'");
       // Script should self-cleanup
       expect(content).toContain('rm -f "$0"');
+      expect(content).toContain('rmdir "$(dirname "$0")" 2>/dev/null || true');
       await cleanupScript(scriptPath);
     });
 
@@ -130,6 +132,7 @@ describe("restart-helper", () => {
       expectWindowsRestartWaitOrdering(content);
       // Batch self-cleanup
       expect(content).toContain('del "%~f0"');
+      expect(content).toContain('rmdir "%~dp0" 2>nul');
       await cleanupScript(scriptPath);
     });
 
@@ -203,8 +206,8 @@ describe("restart-helper", () => {
 
     it("returns null when script creation fails", async () => {
       Object.defineProperty(process, "platform", { value: "linux" });
-      const writeFileSpy = vi
-        .spyOn(fs, "writeFile")
+      const mkdtempSpy = vi
+        .spyOn(fs, "mkdtemp")
         .mockRejectedValueOnce(new Error("simulated write failure"));
 
       const scriptPath = await prepareRestartScript({
@@ -212,7 +215,7 @@ describe("restart-helper", () => {
       });
 
       expect(scriptPath).toBeNull();
-      writeFileSpy.mockRestore();
+      mkdtempSpy.mockRestore();
     });
 
     it("escapes single quotes in profile names for shell scripts", async () => {
