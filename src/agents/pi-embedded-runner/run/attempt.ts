@@ -840,6 +840,11 @@ export async function runEmbeddedAttempt(
       config: params.config,
       sessionAgentId,
     });
+    // Track sessions_yield tool invocation (callback pattern, like clientToolCallDetected)
+    let yieldDetected = false;
+    // Late-binding reference so onYield can abort the session (declared after tool creation)
+    let abortSessionForYield: (() => void) | null = null;
+    let yieldAbortSettled: Promise<void> | null = null;
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
     const toolsRaw = params.disableTools
@@ -884,6 +889,11 @@ export async function runEmbeddedAttempt(
           requireExplicitMessageTarget:
             params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
           disableMessageTool: params.disableMessageTool,
+          onYield: () => {
+            yieldDetected = true;
+            runAbortController.abort("sessions_yield");
+            abortSessionForYield?.();
+          },
         });
     const toolsEnabled = supportsModelTools(params.model);
     const tools = sanitizeToolsForGoogle({
@@ -1194,6 +1204,9 @@ export async function runEmbeddedAttempt(
         throw new Error("Embedded agent session missing");
       }
       const activeSession = session;
+      abortSessionForYield = () => {
+        yieldAbortSettled = Promise.resolve(activeSession.abort());
+      };
       removeToolResultContextGuard = installToolResultContextGuard({
         agent: activeSession.agent,
         contextWindowTokens: Math.max(
@@ -1456,6 +1469,7 @@ export async function runEmbeddedAttempt(
       }
 
       let aborted = Boolean(params.abortSignal?.aborted);
+      let yieldAborted = false;
       let timedOut = false;
       let timedOutDuringCompaction = false;
       const getAbortReason = (signal: AbortSignal): unknown =>
@@ -1783,8 +1797,25 @@ export async function runEmbeddedAttempt(
             await abortable(activeSession.prompt(effectivePrompt));
           }
         } catch (err) {
-          promptError = err;
-          promptErrorSource = "prompt";
+          // Yield-triggered abort is intentional — treat as clean stop, not error.
+          // Check the abort reason to distinguish from external aborts (timeout, user cancel)
+          // that may race after yieldDetected is set.
+          yieldAborted =
+            yieldDetected &&
+            isRunnerAbortError(err) &&
+            err instanceof Error &&
+            err.cause === "sessions_yield";
+          if (yieldAborted) {
+            aborted = false;
+            // Ensure the session abort has fully settled before proceeding.
+            if (yieldAbortSettled) {
+              // eslint-disable-next-line @typescript-eslint/await-thenable -- abort() returns Promise<void> per AgentSession.d.ts
+              await yieldAbortSettled;
+            }
+          } else {
+            promptError = err;
+            promptErrorSource = "prompt";
+          }
         } finally {
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
@@ -1811,12 +1842,16 @@ export async function runEmbeddedAttempt(
             await params.onBlockReplyFlush();
           }
 
-          const compactionRetryWait = await waitForCompactionRetryWithAggregateTimeout({
-            waitForCompactionRetry,
-            abortable,
-            aggregateTimeoutMs: COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS,
-            isCompactionStillInFlight: isCompactionInFlight,
-          });
+          // Skip compaction wait when yield aborted the run — the signal is
+          // already tripped and abortable() would immediately reject.
+          const compactionRetryWait = yieldAborted
+            ? { timedOut: false }
+            : await waitForCompactionRetryWithAggregateTimeout({
+                waitForCompactionRetry,
+                abortable,
+                aggregateTimeoutMs: COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS,
+                isCompactionStillInFlight: isCompactionInFlight,
+              });
           if (compactionRetryWait.timedOut) {
             timedOutDuringCompaction = true;
             if (!isProbeSession) {
@@ -2069,6 +2104,7 @@ export async function runEmbeddedAttempt(
         compactionCount: getCompactionCount(),
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
+        yieldDetected: yieldDetected || undefined,
       };
     } finally {
       // Always tear down the session (and release the lock) before we leave this attempt.
