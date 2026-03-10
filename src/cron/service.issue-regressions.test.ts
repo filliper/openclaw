@@ -1605,10 +1605,11 @@ describe("Cron issue regressions", () => {
     const result = await enqueueRun(state, job.id, "force");
     expect(result).toEqual({ ok: true, enqueued: true, runId: expect.any(String) });
 
-    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(2));
     expect(log.error.mock.calls[0]?.[1]).toBe(
       "cron: queued manual run background execution failed",
     );
+    expect(log.error.mock.calls[1]?.[1]).toBe("cron: failed to surface manual run enqueue failure");
 
     clearCommandLane(CommandLane.Cron);
     clearCommandLane(CommandLane.CronDispatch);
@@ -1658,8 +1659,8 @@ describe("Cron issue regressions", () => {
     await vi.waitFor(() => {
       const storedJob = state.store?.jobs.find((entry) => entry.id === job.id);
       expect(storedJob?.state.runningAtMs).toBeUndefined();
-      expect(storedJob?.state.lastStatus).toBeUndefined();
-      expect(storedJob?.state.lastError).toBeUndefined();
+      expect(storedJob?.state.lastStatus).toBe("error");
+      expect(storedJob?.state.lastError).toContain("gateway draining");
     });
     await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
   });
@@ -1716,8 +1717,8 @@ describe("Cron issue regressions", () => {
     await vi.waitFor(() => {
       const storedJob = state.store?.jobs.find((entry) => entry.id === job.id);
       expect(storedJob?.state.runningAtMs).toBeUndefined();
-      expect(storedJob?.state.lastStatus).toBeUndefined();
-      expect(storedJob?.state.lastError).toBeUndefined();
+      expect(storedJob?.state.lastStatus).toBe("error");
+      expect(storedJob?.state.lastError).toContain("gateway draining");
     });
     await vi.waitFor(() => expect(log.error).toHaveBeenCalledTimes(1));
   });

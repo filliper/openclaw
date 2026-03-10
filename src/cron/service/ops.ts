@@ -1,4 +1,4 @@
-import { enqueueCommandInLane } from "../../process/command-queue.js";
+import { enqueueCommandInLane, GatewayDrainingError } from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "../types.js";
 import { normalizeCronCreateDeliveryInput } from "./initial-delivery.js";
@@ -540,6 +540,69 @@ function createQueuedManualRunLaneOpts(state: CronServiceState, id: string, runI
   } as const;
 }
 
+function parseStartedAtFromRunId(runId: string): number | undefined {
+  const parts = runId.split(":");
+  if (parts.length >= 3) {
+    const ts = Number.parseInt(parts[parts.length - 2] ?? "", 10);
+    return Number.isNaN(ts) ? undefined : ts;
+  }
+  return undefined;
+}
+
+async function surfaceManualRunEnqueueFailure(
+  state: CronServiceState,
+  id: string,
+  runId: string,
+  err: unknown,
+): Promise<void> {
+  const endedAt = state.deps.nowMs();
+  const startedAt = parseStartedAtFromRunId(runId) ?? endedAt;
+  const errMessage =
+    err instanceof GatewayDrainingError ? "gateway draining; manual run not executed" : String(err);
+
+  await locked(state, async () => {
+    await ensureLoaded(state, { skipRecompute: true });
+    const job = state.store?.jobs.find((entry) => entry.id === id);
+    if (!job) {
+      return;
+    }
+
+    const shouldDelete = applyJobResult(
+      state,
+      job,
+      {
+        status: "error",
+        error: errMessage,
+        delivered: false,
+        startedAt,
+        endedAt,
+      },
+      { preserveSchedule: true },
+    );
+
+    emit(state, {
+      jobId: job.id,
+      action: "finished",
+      status: "error",
+      error: errMessage,
+      runAtMs: startedAt,
+      durationMs: job.state.lastDurationMs,
+      nextRunAtMs: job.state.nextRunAtMs,
+      deliveryStatus: job.state.lastDeliveryStatus,
+      deliveryError: job.state.lastDeliveryError,
+    });
+
+    if (shouldDelete && state.store) {
+      state.store.jobs = state.store.jobs.filter((entry) => entry.id !== job.id);
+      emit(state, { jobId: job.id, action: "removed" });
+    }
+
+    recomputeNextRunsForMaintenance(state, { recomputeExpired: true });
+    await persist(state);
+    armTimer(state);
+  });
+}
+
 function queueManualRunExecution(
   state: CronServiceState,
   id: string,
@@ -570,6 +633,12 @@ function queueManualRunExecution(
       { jobId: id, runId, err: String(err) },
       "cron: queued manual run background execution failed",
     );
+    void surfaceManualRunEnqueueFailure(state, id, runId, err).catch((surfErr) => {
+      state.deps.log.error(
+        { jobId: id, runId, surfErr: String(surfErr) },
+        "cron: failed to surface manual run enqueue failure",
+      );
+    });
   });
 }
 
@@ -613,6 +682,12 @@ export async function enqueueRun(state: CronServiceState, id: string, mode?: "du
       { jobId: id, runId, err: String(err) },
       "cron: queued manual run background execution failed",
     );
+    void surfaceManualRunEnqueueFailure(state, id, runId, err).catch((surfErr) => {
+      state.deps.log.error(
+        { jobId: id, runId, surfErr: String(surfErr) },
+        "cron: failed to surface manual run enqueue failure",
+      );
+    });
   });
   return { ok: true, enqueued: true, runId } as const;
 }
