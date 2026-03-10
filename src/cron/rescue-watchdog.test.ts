@@ -1,7 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const loadConfig = vi.hoisted(() =>
-  vi.fn(() => ({
+  vi.fn<
+    () => {
+      gateway: {
+        port: number;
+        bind: string;
+        customBindHost?: string;
+        tls?: { enabled?: boolean };
+        auth: {
+          mode: string;
+          token: string;
+        };
+      };
+    }
+  >(() => ({
     gateway: {
       port: 18_789,
       bind: "loopback",

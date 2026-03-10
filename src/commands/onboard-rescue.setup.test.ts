@@ -25,7 +25,15 @@ const probeGateway = vi.hoisted(() =>
   })),
 );
 const inspectPortUsage = vi.hoisted(() =>
-  vi.fn(async (port: number) => ({
+  vi.fn<
+    (port: number) => Promise<{
+      port: number;
+      status: string;
+      listeners: Array<{ pid?: number; ppid?: number; commandLine?: string }>;
+      hints: string[];
+      errors?: string[];
+    }>
+  >(async (port: number) => ({
     port,
     status: "busy",
     listeners: [{ pid: 4242, commandLine: "openclaw gateway run" }],
@@ -56,7 +64,14 @@ const gatewayReadCommand = vi.hoisted(() =>
   >(async () => null),
 );
 const gatewayReadRuntime = vi.hoisted(() =>
-  vi.fn(async () => ({
+  vi.fn<
+    () => Promise<{
+      status: string;
+      pid?: number;
+      detail?: string;
+      missingUnit?: boolean;
+    }>
+  >(async () => ({
     status: "running",
     pid: 4242,
   })),
